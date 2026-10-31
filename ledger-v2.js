@@ -1321,15 +1321,10 @@ function planSafeLedgerMerge(current,incoming){
    &&!(current.imports||[]).length;
  const base=isEmpty?{...blank(),...incoming}:current;
  // Existing custom rules, merchant lists, taxonomies, and edits always win.
+ // An old backup must not resurrect a rule, payee, or excluded bank entry
+ // deliberately removed from an active ledger. Only a pristine restore copies them.
  const rules={...(base.customRules||{})},rent={...(base.rentRecipients||{})};
- for(const [k,v] of Object.entries(incoming.customRules||{}))if(!(k in rules))rules[k]=v;
- for(const [k,v] of Object.entries(incoming.rentRecipients||{}))if(!(k in rent))rent[k]=v;
- const oldBankAudit=Array.isArray(base.excludedAudit)?base.excludedAudit:[];
- const auditKeys=new Set(oldBankAudit.map(x=>x.bankKey).filter(Boolean));
- const audit=[...oldBankAudit];
- for(const x of Array.isArray(incoming.excludedAudit)?incoming.excludedAudit:[]){
-   if(x?.bankKey&&!auditKeys.has(x.bankKey)){audit.push(x);auditKeys.add(x.bankKey)}
- }
+ const audit=Array.isArray(base.excludedAudit)?[...base.excludedAudit]:[];
  const next={...base,version:2,records:[...currentRows,...additions],
    dailyLotto:[...(current.dailyLotto||[]),...dailyAdd],
    storeProfits:{...(current.storeProfits||{}),...profitAdd},
