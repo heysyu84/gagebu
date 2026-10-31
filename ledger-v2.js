@@ -1363,6 +1363,7 @@ function editRecord(id){
  dlg.showModal();
 }
 function submitEditor(f){
+ if(editing==='new')syncEditorOnnuriDefault();
  const data=new FormData(f);const amt=Number(data.get('amount'));
  const merchant=String(data.get('merchant')||'').trim();
  if(!data.get('date')||!(amt>0)||!merchant){toast('날짜·금액·거래처를 입력하세요.');return}
@@ -1467,6 +1468,7 @@ function onChange(e){
    if(row&&row.scope==='windmoon'&&['scope','category'].includes(el.dataset.sheetField))row.subcategory='풍월관';
    return;
  }
+ if(['edit-merchant','edit-payment'].includes(el.id)){syncEditorOnnuriDefault();return}
  if(el.id==='edit-group'||el.id==='edit-category'){updateEditorSuggestions();return}
  if(el.id==='edit-scope'){
    const sub=$('#edit-subcategory');if(sub){
@@ -1499,6 +1501,7 @@ function init(){
  document.addEventListener('click',onClick);
  document.addEventListener('change',onChange);
  document.addEventListener('input',e=>{
+   if(['edit-merchant','edit-payment'].includes(e.target.id))syncEditorOnnuriDefault();
    if(e.target.id==='query-filter')onChange(e);
    if(e.target.dataset?.sheetField){const row=sheetData.rows[Number(e.target.dataset.sheetIndex)];if(row)row[e.target.dataset.sheetField]=e.target.value;}
    const form=e.target.closest?.('.sales-form[data-sale-type="store"]');
