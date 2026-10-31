@@ -177,7 +177,7 @@ function load(){
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(paymentFilter==='all'||effectivePaymentMethod(x)===paymentFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.bankPayment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
 const monthlyOptions=()=>{
- const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
+ const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.refunds||[]).map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
  for(let m=1;m<=12;m++)months.add('2026-'+String(m).padStart(2,'0'));
  return ['<option value="all">전체 기간</option>',...[...months].sort().reverse().map(m=>'<option value="'+m+'"'+(m===period?' selected':'')+'>'+m.slice(0,4)+'년 '+Number(m.slice(5))+'월</option>')].join('');
 };
