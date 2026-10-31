@@ -123,10 +123,10 @@ function classify(row,customRules={}){
    return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
     category:'집',subcategory:'인터넷',reason:'집 인터넷 요금',confidence:0.95};
  if(type==='지출'&&/(?:LG\s*U\+|LGU\+|LG유플러스|엘지유플러스)/i.test(m)){
-   const shop=Math.abs(amount)<55000;
-   return {action:'keep',scope:shop?'business':'personal',status:'confirmed',
-    ledgerType:'fixed',category:shop?'가게':'집',subcategory:shop?'인터넷':'통신료',
-    reason:shop?'반복 가게 인터넷 요금대':'반복 개인 휴대폰 요금대',confidence:0.85};
+   // The same LG U+ merchant covers both store internet and personal mobile.
+   // Avoid a fixed currency threshold: the importer checks paired monthly
+   // amounts from the user's private confirmed ledger instead.
+   return review('LG U+ 가게 인터넷·개인 휴대폰 반복 청구액 대조 필요',m,row.major,row.minor);
  }
  if(type==='지출'&&/(?:에스케이텔레콤|SK\s*세븐모바일|큰사람커넥트|11pay_SKT정기결제)/i.test(m))
    return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
