@@ -166,6 +166,11 @@ function load(){
  if(state.bankSaladBaselineVersion!==2){adoptBankSaladDefaults();save()}
  if(state.fixedPurchasePresetVersion!==1){trimUnusedPurchasePresets();save()}
  if(state.consumptionOnlinePresetVersion!==1){trimUnusedConsumptionOnlinePresets();save()}
+ // Cleanup mis-imported month numbers from the saved payment presets only.
+ // Historical income/payment source records are preserved verbatim.
+ if(Array.isArray(state.paymentMethods)&&state.paymentMethods.some(isPaymentMonthMarker)){
+   state.paymentMethods=state.paymentMethods.filter(x=>!isPaymentMonthMarker(x));save();
+ }
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
@@ -625,7 +630,7 @@ function categoriesPage(){
   '<h3 class="payment-group-heading">그 외 결제수단 · 사용 횟수순</h3>'+
   paymentOptions.filter(pay=>!isCardPayment(pay)).map(paymentRow).join('');
  return pageIntro('CATEGORY MANAGER','분류 관리','사용처·지출 종류·대분류·소분류·결제수단을 직접 관리합니다. 검색 입력에서 기존 항목을 선택하거나 새로운 이름을 저장할 수도 있습니다.')+
- '<section class="surface bank-baseline-info"><div class="surface-head"><div><h2>뱅크샐러드 기반 기본값</h2><p>소비지출 대분류 13개 · 식비는 외식/배달만 · 온라인쇼핑은 구매처별 · 결제수단은 원본 32종 및 수동 입력 4종</p></div>'+
+ '<section class="surface bank-baseline-info"><div class="surface-head"><div><h2>뱅크샐러드 기반 기본값</h2><p>소비지출 대분류 13개 · 식비는 외식/배달만 · 온라인쇼핑은 구매처별 · 결제수단은 원본 32종 및 수동 입력 5종</p></div>'+
  '<button type="button" class="btn subtle" id="restore-bank-presets">기본 분류 복원</button></div></section>'+
  '<div class="tax-grid"><section class="surface"><div class="surface-head"><h2>사용처</h2></div><div class="tax-body">'+labelControls(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),'rename-scope')+
  '<form class="tax-line tax-add" data-tax-action="add-scope"><b>새 사용처</b><input name="value" required maxlength="80" placeholder="사용처 추가"><button class="btn primary">＋ 추가</button></form></div></section>'+
