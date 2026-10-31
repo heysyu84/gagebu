@@ -1548,12 +1548,17 @@ function planOnnuriCorrections(current,patch){
  const changes=[],seen=new Set();let unchanged=0,missing=0,conflicts=0;
  for(const entry of patch.corrections){
    if(!entry||typeof entry.id!=='string'||seen.has(entry.id)||!entry.match||!entry.set||
-      Object.keys(entry.set).some(k=>!['onnuriLinkedCard','onnuriCardSource','onnuri','onnuriManual'].includes(k)))throw Error('수정 패치 구성 오류');
+      Object.keys(entry.set).some(k=>!['onnuriLinkedCard','onnuriCardSource','onnuri','onnuriManual','merchant','subcategory','merchantSource'].includes(k)))throw Error('수정 패치 구성 오류');
    seen.add(entry.id);
    const r=byId.get(entry.id);
    if(!r){missing++;continue}
    if(r.date!==entry.match.date||r.amount!==entry.match.amount||r.direction!=='expense'||
       r.payment!==entry.match.payment||r.onnuri===false){conflicts++;continue}
+   if(entry.set.merchant!=='새종로약국'||entry.set.subcategory!=='약국'||entry.set.merchantSource!=='user-confirmed')
+     throw Error('확인되지 않은 거래처 수정');
+   if((r.merchant&&r.merchant!==entry.set.merchant)||!['병원/의원','약국'].includes(r.subcategory)){
+     conflicts++;continue;
+   }
    if(entry.set.onnuriLinkedCard!=='The CLASSIC-Y'||entry.set.onnuriCardSource!=='user-confirmed'||
       entry.set.onnuri!==true||entry.set.onnuriManual!==true)throw Error('확인되지 않은 카드 지정');
    if(r.onnuriLinkedCard&&r.onnuriLinkedCard!==entry.set.onnuriLinkedCard){conflicts++;continue}
@@ -1567,7 +1572,7 @@ function applyOnnuriCorrections(patch,filename){
  if(!result.changes.length){toast('수정할 거래 없음 · 이미 반영 '+result.unchanged+'건 / 미등록 '+result.missing+'건 / 내용 불일치 '+result.conflicts+'건');return}
  if(!confirm('확인된 온누리 연동 카드 '+result.changes.length+'건을 수정합니다.\n'+
    result.changes.map(x=>x.date+' · '+won(x.amount)).join('\n')+
-   '\n\n기존 금액, 결제수단, 거래처, 은행 원본 정보는 유지합니다.'+
+   '\n\n금액·원본 결제수단·은행 원본 정보는 유지하고, 사용자 확인 거래처·약국 분류·연동 카드만 수정합니다.'+
    (result.missing||result.conflicts?'\n미등록 '+result.missing+'건 · 내용 불일치 '+result.conflicts+'건은 변경하지 않습니다.':'')+
    '\n\n수정 전 JSON을 자동 백업합니다. 계속할까요?'))return;
  try{download('가게부_V2_수정전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
