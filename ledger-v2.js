@@ -45,7 +45,7 @@ function syncEditorOnnuriDefault(){
  el.checked=suggestion.checked;el.dataset.onnuriAuto=suggestion.auto?'1':'0';
  el.title=suggestion.auto?'동일 가게의 과거 온누리 결제 이력으로 자동 체크됨':'';
 }
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -328,6 +328,7 @@ function taxonomy(){
  for(const group of Object.keys(GROUP))if(!state.taxonomy[group])state.taxonomy[group]={};
  if(!Array.isArray(state.paymentMethods)||!state.paymentMethods.length)state.paymentMethods=[...TAX_PAYMENT_DEFAULTS];
  if(!Array.isArray(state.hiddenPaymentMethods))state.hiddenPaymentMethods=[];
+ if(!state.paymentAliases||typeof state.paymentAliases!=='object'||Array.isArray(state.paymentAliases))state.paymentAliases={};
  return state.taxonomy;
 }
 /* One-time upgrade for existing V2 browsers: replace placeholders with BankSalad
@@ -455,7 +456,15 @@ const categoriesFor=group=>taxonomy()[group]||{};
 const valueOptions=values=>values.map(s=>'<option value="'+E(s)+'"></option>').join('');
 // Legacy sheet spellings of the same physical cards are counted together.
 const PAYMENT_DISPLAY_ALIASES={'신한HI-POINT':'HI-POINT','신한클래식Y':'The CLASSIC-Y','쿠팡국민카드':'쿠팡 와우 카드'};
-const paymentLabelKey=value=>PAYMENT_DISPLAY_ALIASES[String(value||'').trim()]||String(value||'').trim();
+const paymentLabelKey=value=>{
+ let label=String(value||'').trim();
+ label=PAYMENT_DISPLAY_ALIASES[label]||label;
+ const seen=new Set();
+ for(let i=0;i<20&&state.paymentAliases?.[label]&&!seen.has(label);i++){
+   seen.add(label);label=state.paymentAliases[label];
+ }
+ return label;
+};
 const isPaymentMonthMarker=value=>/^(?:[1-9]|1[0-2])$/.test(String(value||'').trim());
 const isCardPayment=value=>BANKSALAD_CARDS.includes(value)||/(?:카드|체크카드|HI-POINT|CLASSIC-Y)/i.test(value);
 function paymentUsageCounts(){
@@ -569,13 +578,12 @@ function editTax(action,group,major,minor,name){
  }else if(action==='rename-payment'){
    if(paymentChoices().includes(next))throw Error('동일한 결제수단이 있습니다.');
    if(!paymentChoices().includes(major))throw Error('목록에 없는 결제수단입니다.');
-   state.paymentMethods=(state.paymentMethods||[]).filter(x=>paymentLabelKey(x)!==major);
-   state.paymentMethods.push(next);
-   if(!state.hiddenPaymentMethods.includes(major))state.hiddenPaymentMethods.push(major);
-   if(state.hiddenPaymentMethods.includes(next))state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
-   // Keep imported card statement text unchanged; only manual entry labels may change.
-   for(const x of state.records)if(x.source==='manual'&&x.payment===major)x.payment=next;
-   for(const x of sheetData.rows)if(x.payment===major)x.payment=next;
+   // Change the label in the selector without overwriting imported raw records.
+   for(const row of state.records)if(row.source==='manual'&&paymentLabelKey(row.payment)===major)row.payment=next;
+   for(const row of sheetData.rows)if(paymentLabelKey(row.payment)===major)row.payment=next;
+   state.paymentAliases[major]=next;
+   if(!state.paymentMethods.includes(next))state.paymentMethods.push(next);
+   state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
  }else if(action==='hide-payment'){
    if(!paymentChoices().includes(major))throw Error('결제수단을 찾을 수 없습니다.');
    state.paymentMethods=(state.paymentMethods||[]).filter(x=>paymentLabelKey(x)!==major);
