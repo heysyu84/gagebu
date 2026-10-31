@@ -319,7 +319,7 @@ function dashboard(){
    '<div class="md-period-control"><label for="period-filter">조회 기간</label><select id="period-filter">'+monthlyOptions()+'</select></div>');
  return head+
  '<div class="md-status-strip"><span>확정 지출 <b>'+confirmed.length.toLocaleString('ko-KR')+'건</b></span>'+
- '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+ '<span>카드 환불 <b>'+(state.refunds||[]).filter(x=>x.status==='matched').length+'건</b> 연결 · 확인 필요 <b>'+(state.refunds||[]).filter(x=>x.status==='review').length+'건</b></span>'+
+ '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+ '<span>카드 환불 <b>'+(state.refunds||[]).filter(x=>x.status==='matched'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b> 연결 · 확인 필요 <b>'+(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b></span>'+
  '<span>기간 <b>'+(period==='all'?'전체 기간':E(period))+'</b></span>'+
  '<button type="button" data-nav="review">미분류 검토 →</button></div>'+
  '<div class="md-kpi-grid">'+statCard('확정 수입',fin.income,'편의점 '+dashWonShort(storeIncome)+' · 토토 '+dashWonShort(lottoIncome),'teal','↗')+
@@ -387,11 +387,12 @@ function reviewCard(x,i){
 function reviewPage(){
  const list=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(period==='all'||x.date.slice(0,7)===period)).sort((a,b)=>b.date.localeCompare(a.date));
  const online=list.filter(x=>x.category==='온라인쇼핑').length;
+ const pendingRefunds=(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period));
  return pageIntro('REVIEW INBOX','분류가 필요한 거래','애매한 거래를 임의 분류하지 않았습니다. 개인·편의점·풍월관 버튼 중 하나를 누르면 즉시 해당 장부로 이동합니다.',
  '<select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>')+
- '<div class="review-summary"><div><strong>'+list.length.toLocaleString('ko-KR')+'건</strong><span>분류 대기</span></div><div><strong>'+online.toLocaleString('ko-KR')+'건</strong><span>온라인쇼핑 확인</span></div><div><strong>'+won(sum(list))+'</strong><span>미반영 검토 금액</span></div></div>'+
+ '<div class="review-summary"><div><strong>'+list.length.toLocaleString('ko-KR')+'건</strong><span>분류 대기</span></div><div><strong>'+pendingRefunds.length.toLocaleString('ko-KR')+'건</strong><span>원결제 확인 필요한 환불</span></div><div><strong>'+won(sum(list))+'</strong><span>미반영 검토 금액</span></div></div>'+
  '<div class="review-header"><div><h2>빠른 분류</h2><p>거래처와 결제수단을 보고 바로 선택하세요. 확정 후에도 거래내역에서 수정할 수 있습니다.</p></div><div class="shortcuts">개인 <kbd>1</kbd> 편의점 <kbd>2</kbd> 풍월관 <kbd>3</kbd></div></div>'+
- '<div class="review-list">'+(list.length?list.slice(reviewOffset,reviewOffset+35).map((x,i)=>reviewCard(x,reviewOffset+i)).join(''):'<div class="empty spacious"><b>모든 거래의 분류가 완료됐습니다.</b><p>다음 뱅크샐러드 파일을 가져오면 새 검토 항목이 나타납니다.</p></div>')+'</div>'+
+ '<div class="review-list">'+(list.length?list.slice(reviewOffset,reviewOffset+35).map((x,i)=>reviewCard(x,reviewOffset+i)).join(''):'<div class="empty spacious"><b>지출 분류 대기 항목이 없습니다.</b><p>'+(pendingRefunds.length?'아래 확인이 필요한 카드 환불을 검토하세요.':'다음 뱅크샐러드 파일을 가져오면 새 검토 항목이 나타납니다.')+'</p></div>')+'</div>'+
  (list.length>35?'<div class="pager"><button class="btn" data-review-page="prev" '+(reviewOffset===0?'disabled':'')+'>이전</button><span>'+(reviewOffset+1)+'–'+Math.min(reviewOffset+35,list.length)+' / '+list.length+'</span><button class="btn" data-review-page="next" '+(reviewOffset+35>=list.length?'disabled':'')+'>다음</button></div>':'')+refundAuditPanel(true);
 }
 
