@@ -592,8 +592,9 @@
       }
       if(e.key==='Enter'){
         e.preventDefault();
-        if(pickable)openSheetPicker(e.target);
-        // Enter does not move to another cell.
+        if(grid==='lotto')moveGrid(grid,row,col,e.shiftKey?-1:1,0);
+        else if(pickable)openSheetPicker(e.target);
+        // Sheet entry uses arrows for cell movement; Lotto keeps its existing Enter behavior.
         return;
       }
       if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();moveGrid(grid,row,col,e.key==='ArrowUp'?-1:1,0);return}
