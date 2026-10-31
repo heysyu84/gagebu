@@ -322,8 +322,17 @@ function commitBank(){
 async function importLegacy(file){
  if(!file)return;
  let rows;
- try{const obj=JSON.parse(await file.text());rows=migrateLegacy(obj)}
- catch(e){toast('원본 JSON을 읽을 수 없습니다: '+e.message);return}
+ try{
+   const obj=JSON.parse(await file.text());
+   if(obj.version===2&&Array.isArray(obj.records)){
+     if(!confirm('가게부 V2 전체 백업 '+obj.records.length+'건을 복원하면 현재 V2 데이터를 교체합니다. 현재 기록을 먼저 JSON으로 백업하셨나요?'))return;
+     const previous=state;
+     state={...blank(),...obj};
+     if(!save()){state=previous;return}
+     preview=null;render();toast('V2 전체 백업을 복원했습니다.');return;
+   }
+   rows=migrateLegacy(obj);
+ }catch(e){toast('원본 JSON을 읽을 수 없습니다: '+e.message);return}
  const existing=new Set(state.records.map(x=>x.id));
  const keyed=new Map(state.records.filter(x=>x.source==='legacy'&&x.sourceRow!=null&&x.sourceSheet)
    .map(x=>[x.sourceSheet+'|'+x.sourceRow,x]));
