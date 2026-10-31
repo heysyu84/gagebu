@@ -46,7 +46,7 @@ function syncEditorOnnuriDefault(){
  el.checked=suggestion.checked;el.dataset.onnuriAuto=suggestion.auto?'1':'0';
  el.title=suggestion.auto?'동일 가게의 과거 온누리 결제 이력으로 자동 체크됨':'';
 }
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],refunds:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -138,6 +138,7 @@ function load(){
    if(existing&&existing.version===2&&Array.isArray(existing.records)){
      state={...blank(),...existing};
      if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
+     if(!Array.isArray(state.refunds))state.refunds=[];
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
      taxonomy();
      if(!Object.prototype.hasOwnProperty.call(existing,'bankSaladBaselineVersion'))state.bankSaladBaselineVersion=0;
@@ -182,7 +183,13 @@ const monthlyOptions=()=>{
 };
 const statusBadge=x=>x.status==='review'?'<span class="tag tag-warn">분류 대기</span>':x.status==='excluded'?'<span class="tag tag-muted">제외됨</span>':'<span class="tag tag-ok">분류 완료</span>';
 const scopeBadge=x=>'<span class="tag tag-'+E(x.scope)+'">'+E(LABEL[x.scope]||'미분류')+'</span>';
-const sum=list=>list.reduce((v,x)=>v+n(x.amount),0);
+/* Refunds offset the purchase rather than becoming income. Original charges
+   and credits are preserved separately to show FX gain/loss. */
+const linkedRefunds=row=>(state.refunds||[]).filter(r=>r.status==='matched'&&r.refundOf===row.id);
+const refundedAmount=row=>linkedRefunds(row).reduce((v,r)=>v+n(r.amount),0);
+const netExpenseAmount=row=>n(row.amount)-refundedAmount(row);
+const sum=list=>list.reduce((v,x)=>v+(x.direction==='expense'?netExpenseAmount(x):n(x.amount)),0);
+const reviewableExpense=x=>x.status==='review'&&!(refundedAmount(x)===n(x.amount)&&n(x.amount)>0);
 function setStatus(msg){const el=$('#save-indicator');if(el)el.textContent=msg}
 function toast(text){
  const el=$('#toast');if(!el)return;el.textContent=text;el.classList.add('visible');
@@ -229,7 +236,7 @@ function dashRankList(entries,limit=8,metric='amount'){
 function dashboard(){
  const all=relevant().filter(x=>period==='all'||x.date.slice(0,7)===period);
  const confirmed=all.filter(x=>x.status==='confirmed'&&x.scope!=='review'&&x.scope!=='excluded');
- const pending=all.filter(x=>x.status==='review'||x.scope==='review');
+ const pending=all.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
  const fin=financials(period);
  const total=fin.expenses,personal=confirmed.filter(x=>x.scope==='personal');
  const business=confirmed.filter(x=>x.scope==='business'),windmoon=confirmed.filter(x=>x.scope==='windmoon');
@@ -241,7 +248,7 @@ function dashboard(){
    entry.amount+=amount;entry.count++;map.set(key,entry);
  };
  for(const x of confirmed){
-   const amount=n(x.amount);
+   const amount=netExpenseAmount(x);
    let payment=isOnnuri(x)?'온누리상품권':String(x.payment||'').trim();
    if((!payment||/^(?:카드|체크카드|신용카드|계좌이체|자동이체)$/i.test(payment))&&x.bankPayment)
      payment=String(x.bankPayment).trim();
@@ -359,7 +366,7 @@ function transactionTable(items,compact=false){
   (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
  '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
  (x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
- '<td class="right amount-col">−'+won(x.amount)+'</td><td class="row-actions"><button class="row-edit" data-edit="'+E(x.id)+'">수정</button><button class="row-delete" data-delete-record="'+E(x.id)+'">삭제</button></td></tr>').join(''):
+ '<td class="right amount-col">'+(netExpenseAmount(x)<0?'+': '−')+won(Math.abs(netExpenseAmount(x)))+(refundedAmount(x)?'<small>원결제 '+won(x.amount)+' · 환불 '+won(refundedAmount(x))+'</small>':'')+'</td><td class="row-actions"><button class="row-edit" data-edit="'+E(x.id)+'">수정</button><button class="row-delete" data-delete-record="'+E(x.id)+'">삭제</button></td></tr>').join(''):
  '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
 }
 function reviewCard(x,i){
@@ -378,7 +385,7 @@ function reviewCard(x,i){
  '</div></article>';
 }
 function reviewPage(){
- const list=state.records.filter(x=>x.direction==='expense'&&x.status==='review'&&(period==='all'||x.date.slice(0,7)===period)).sort((a,b)=>b.date.localeCompare(a.date));
+ const list=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(period==='all'||x.date.slice(0,7)===period)).sort((a,b)=>b.date.localeCompare(a.date));
  const online=list.filter(x=>x.category==='온라인쇼핑').length;
  return pageIntro('REVIEW INBOX','분류가 필요한 거래','애매한 거래를 임의 분류하지 않았습니다. 개인·편의점·풍월관 버튼 중 하나를 누르면 즉시 해당 장부로 이동합니다.',
  '<select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>')+
@@ -999,13 +1006,13 @@ function sheetSelectChange(el){
 
 function recordsPage(){
  const entries=filtered(state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded')).sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||'')));
- const confirmed=entries.filter(x=>x.status==='confirmed'&&x.scope!=='review'),pending=entries.filter(x=>x.status==='review'||x.scope==='review');
+ const confirmed=entries.filter(x=>x.status==='confirmed'&&x.scope!=='review'),pending=entries.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
  const group=new Map(),merchant=new Map();
  if(paymentFilter!=='all')for(const x of entries){
    const name=[x.category||'미분류',x.subcategory||''].filter(Boolean).join(' / ');
-   const obj=group.get(name)||{amount:0,count:0};obj.amount+=n(x.amount);obj.count++;group.set(name,obj);
+   const obj=group.get(name)||{amount:0,count:0};obj.amount+=netExpenseAmount(x);obj.count++;group.set(name,obj);
    const shop=String(x.merchant||'거래처 미기재').trim()||'거래처 미기재';
-   const prior=merchant.get(shop)||{amount:0,count:0};prior.amount+=n(x.amount);prior.count++;merchant.set(shop,prior);
+   const prior=merchant.get(shop)||{amount:0,count:0};prior.amount+=netExpenseAmount(x);prior.count++;merchant.set(shop,prior);
  }
  const paymentBreakdown=paymentFilter==='all'?'':(()=>{
    const fmt=map=>[...map.entries()].sort((a,b)=>b[1].amount-a[1].amount).slice(0,5).map(([name,x])=>
@@ -1094,7 +1101,7 @@ const estimatedCommission=(handle,rate=state.lottoRatePct)=>Math.round(Number(ha
 function financials(selected=period){
  const income=revenueTotal('store',selected)+revenueTotal('lotto',selected);
  const expenses=state.records.filter(x=>x.direction==='expense'&&x.status==='confirmed'&&x.scope!=='excluded'&&x.scope!=='review'&&(selected==='all'||x.date.slice(0,7)===selected));
- return {income,expenses:sum(expenses),balance:income-sum(expenses),unreviewed:sum(state.records.filter(x=>x.direction==='expense'&&x.status==='review'&&(selected==='all'||x.date.slice(0,7)===selected)))};
+ return {income,expenses:sum(expenses),balance:income-sum(expenses),unreviewed:sum(state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(selected==='all'||x.date.slice(0,7)===selected)))};
 }
 function revenueTotal(type,selected=period){
  return sum(state.records.filter(x=>x.direction==='income'&&x.category===SALES[type].category&&x.status!=='excluded'&&(selected==='all'||x.date.slice(0,7)===selected)));
@@ -1262,7 +1269,7 @@ function settingsPage(){
 }
 function render(){
  $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
- const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.status==='review'&&x.direction==='expense').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
+ const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)).length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
  container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,categories:categoriesPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
  $('#sidebar').classList.remove('open');
