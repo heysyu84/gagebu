@@ -1041,7 +1041,7 @@ function importPage(){
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
  '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>JSON 안전 병합</h2><p>오래된 V2 백업이나 기존 시트 이관 JSON도 기존 장부를 덮어쓰지 않습니다. 같은 거래는 유지하고 없는 거래·날짜만 추가하며, 변경 전 복구용 JSON을 다운로드합니다.</p></div></div>'+
- '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 이관 · 데이터 백업 · 확인된 거래 수정 패치</small></label>'+
+ '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 · 데이터 백업 · 카드 환불 대조/기록 수정 패치</small></label>'+
  '<div class="notice compact"><b>기존 데이터 보존 · 전체 덮어쓰기 금지</b><p>오래된 파일을 선택해도 기존 거래, 직접 수정한 분류, 온누리 체크와 사용자 규칙은 유지됩니다. 동일 거래의 과거 분류는 자동으로 되돌리지 않습니다.</p></div></section></div>'+
  (preview?importPreview():importEmpty())+
  '<div class="notice"><b>전액을 자동으로 지출 처리하지 않습니다.</b><p>온누리상품권 충전, 카드대금 납부, 주식투자, 토토 운영대금과 고객 송금은 제외합니다. 월세·가게 임대료는 확인된 수취인·금액만 예외 처리합니다.</p></div>';
@@ -1611,6 +1611,79 @@ function planSafeLedgerMerge(current,incoming){
    currentLast,incomingLast};
 }
 
+/* Verified, narrowly scoped refund reconciliation file. Current records are
+   matched by id/date/amount/payment/status before any update. */
+function planRefundReconciliation(current,file){
+ if(file?.format!=='gagebu-v2-refund-reconciliation'||file?.version!==1||
+    !Array.isArray(file.refunds)||!Array.isArray(file.updates))throw Error('환불 수정 파일 형식 오류');
+ const byId=new Map((current.records||[]).map(x=>[String(x.id),x]));
+ const refundKeys=new Set((current.refunds||[]).map(x=>x.bankKey));
+ const allocations=new Map();
+ for(const x of current.refunds||[])if(x.status==='matched'&&x.refundOf)
+   allocations.set(x.refundOf,(allocations.get(x.refundOf)||0)+n(x.amount));
+ const refunds=[];let duplicates=0,missing=0,conflicts=0;
+ for(const raw of file.refunds){
+   if(!raw||!raw.bankKey||!raw.id||!Number.isSafeInteger(Number(raw.amount))||Number(raw.amount)<=0||
+      !/^\d{4}-\d\d-\d\d$/.test(String(raw.date||''))||!raw.payment||!raw.merchant||
+      !['matched','review'].includes(raw.status))throw Error('환불 항목 구성 오류');
+   if(refundKeys.has(raw.bankKey)){duplicates++;continue}
+   const row={id:String(raw.id),bankKey:String(raw.bankKey),date:String(raw.date),time:String(raw.time||''),
+     amount:Number(raw.amount),merchant:String(raw.merchant),payment:String(raw.payment),
+     note:String(raw.note||''),source:'bank',sourceSheet:'뱅크샐러드',bankType:'지출',
+     status:raw.status,refundOf:String(raw.refundOf||'')};
+   if(row.status==='matched'){
+     const original=byId.get(row.refundOf);
+     if(!original){missing++;continue}
+     // Re-validate the original debit using the same conservative matcher.
+     if(findRefundTarget(row,[original],allocations)!==row.refundOf){conflicts++;continue}
+     allocations.set(row.refundOf,(allocations.get(row.refundOf)||0)+row.amount);
+   }else if(row.refundOf){throw Error('미확인 환불에 원결제 식별자가 있습니다.')}
+   refunds.push(row);refundKeys.add(row.bankKey);
+ }
+ const updated=[],seen=new Set(),fields=['status','scope','category','subcategory','manual','reason'];
+ for(const entry of file.updates){
+   if(!entry||!entry.id||seen.has(entry.id)||!entry.match||!entry.set||
+      Object.keys(entry.set).some(k=>!fields.includes(k)))throw Error('기존 기록 수정 항목 구성 오류');
+   seen.add(entry.id);
+   const original=byId.get(entry.id);
+   if(!original){missing++;continue}
+   if(Object.entries(entry.set).every(([k,v])=>original[k]===v)){duplicates++;continue}
+   if(!['date','amount','payment','status','scope'].every(k=>String(original[k]??'')===String(entry.match[k]??''))){
+     conflicts++;continue;
+   }
+   if(!['confirmed','excluded'].includes(entry.set.status)||!['personal','excluded'].includes(entry.set.scope)||entry.set.manual!==true){
+     throw Error('수정 상태가 허용 범위를 벗어났습니다.');
+   }
+   updated.push({id:entry.id,set:entry.set});
+ }
+ return {refunds,updated,duplicates,missing,conflicts};
+}
+function applyRefundReconciliation(file,filename){
+ let plan;try{plan=planRefundReconciliation(state,file)}
+ catch(e){toast('환불 수정 오류: '+e.message);return}
+ const applied=plan.refunds.filter(x=>x.status==='matched');
+ const pending=plan.refunds.filter(x=>x.status==='review');
+ if(!plan.refunds.length&&!plan.updated.length){
+   toast('새로 반영할 거래가 없습니다. 중복 '+plan.duplicates+'건 · 충돌 '+plan.conflicts+'건');return;
+ }
+ const description='카드 환불 '+plan.refunds.length+'건 (원결제 연결 '+applied.length+
+   '건 · 확인 필요 '+pending.length+'건) / 기존 장부 중복 조정 '+plan.updated.length+'건'+
+   (plan.missing||plan.conflicts?'\n누락 '+plan.missing+'건 · 기존 수정과 충돌 '+plan.conflicts+'건은 제외':'');
+ if(!confirm('기존 가게부를 유지한 채 다음 항목을 반영합니다.\n\n'+description+
+   '\n\n대응하는 원결제에 환불액을 차감하고, 원본 승인·환불 금액은 보존합니다.'+
+   '\n수정 전 전체 JSON 자동 백업을 다운로드합니다. 진행할까요?'))return;
+ try{download('가게부_V2_환불반영전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+     JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
+ catch(e){toast('백업 파일 생성 실패: 수정하지 않았습니다.');return}
+ const previous=state;
+ const updates=new Map(plan.updated.map(x=>[x.id,x.set]));
+ state={...state,records:state.records.map(x=>updates.has(x.id)?{...x,...updates.get(x.id)}:x),
+   refunds:[...(state.refunds||[]),...plan.refunds],
+   imports:[...(state.imports||[]),{at:new Date().toISOString(),name:filename,
+     source:'verified-refund-reconciliation',refunds:plan.refunds.length,matched:applied.length,updated:plan.updated.length}]};
+ if(!save()){state=previous;return}
+ preview=null;render();toast('환불 '+plan.refunds.length+'건 / 거래 조정 '+plan.updated.length+'건 반영 완료');
+}
 function planOnnuriCorrections(current,patch){
  if(patch?.format!=='gagebu-v2-corrections'||patch?.version!==1||!Array.isArray(patch.corrections))throw Error('수정 패치 형식 오류');
  const byId=new Map((current.records||[]).map(r=>[String(r.id),r]));
@@ -1658,6 +1731,7 @@ async function importLegacy(file){
  let raw,incoming;
  try{
    raw=JSON.parse(await file.text());
+   if(raw?.format==='gagebu-v2-refund-reconciliation'){applyRefundReconciliation(raw,file.name);return}
    if(raw?.format==='gagebu-v2-corrections'){applyOnnuriCorrections(raw,file.name);return}
    incoming=raw?.version===2&&Array.isArray(raw.records)?raw:{
      version:2,records:migrateLegacy(raw),
