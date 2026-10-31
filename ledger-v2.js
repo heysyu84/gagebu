@@ -299,7 +299,7 @@ const BANKSALAD_EPAY=['카카오페이 머니','카카오페이 간편결제','�
 const BANKSALAD_ACCOUNTS=['KB우대저축-저축예금','KB마이핏통장','개인사업자 입출금통장',
  '입출금통장','저금통','듀얼K  입출금통장','세이프박스','주택청약종합저축','저축예금',
  '쏠편한 입출금통장(저축예금)','NH주거래우대통장(비대면실명확인)','WON 통장'];
-const NON_BANKSALAD_METHODS=['현금','현금/송금','계좌이체','온누리상품권'];
+const NON_BANKSALAD_METHODS=['현금/송금','온누리상품권','자동이체','계좌이체','현금'];
 const TAX_PAYMENT_DEFAULTS=[...BANKSALAD_CARDS,...BANKSALAD_EPAY,...BANKSALAD_ACCOUNTS,...NON_BANKSALAD_METHODS];
 // Remove only unused, untouched V2 placeholder presets when changing the baseline.
 const PREVIOUS_TAX_PAYMENT_DEFAULTS=['현금','현금/송금','계좌이체','신용카드','체크카드',
@@ -453,12 +453,33 @@ function trimUnusedConsumptionOnlinePresets(){
 
 const categoriesFor=group=>taxonomy()[group]||{};
 const valueOptions=values=>values.map(s=>'<option value="'+E(s)+'"></option>').join('');
+// Legacy sheet spellings of the same physical cards are counted together.
+const PAYMENT_DISPLAY_ALIASES={'신한HI-POINT':'HI-POINT','신한클래식Y':'The CLASSIC-Y','쿠팡국민카드':'쿠팡 와우 카드'};
+const paymentLabelKey=value=>PAYMENT_DISPLAY_ALIASES[String(value||'').trim()]||String(value||'').trim();
+const isPaymentMonthMarker=value=>/^(?:[1-9]|1[0-2])$/.test(String(value||'').trim());
+const isCardPayment=value=>BANKSALAD_CARDS.includes(value)||/(?:카드|체크카드|HI-POINT|CLASSIC-Y)/i.test(value);
+function paymentUsageCounts(){
+ const counts=new Map();
+ for(const r of state.records||[]){
+   if(r.direction!=='expense'||r.status==='excluded')continue;
+   // A prepaid Onnuri charge is a distinct funding method, not a credit-card charge.
+   const raw=isOnnuri(r)?'온누리상품권':String(r.payment||r.bankPayment||'').trim();
+   const name=paymentLabelKey(raw);
+   if(!name||isPaymentMonthMarker(name))continue;
+   counts.set(name,(counts.get(name)||0)+1);
+ }
+ return counts;
+}
 function paymentChoices(){
  taxonomy();
- const hidden=new Set(state.hiddenPaymentMethods||[]);
- const vals=new Set([...state.paymentMethods,...state.records.map(x=>x.payment).filter(Boolean)].filter(x=>!hidden.has(x)));
- const kind=v=>BANKSALAD_CARDS.includes(v)?0:BANKSALAD_EPAY.includes(v)?1:BANKSALAD_ACCOUNTS.includes(v)?2:3;
- return [...vals].sort((a,b)=>kind(a)-kind(b)||a.localeCompare(b,'ko'));
+ const hidden=new Set((state.hiddenPaymentMethods||[]).map(paymentLabelKey));
+ const counts=paymentUsageCounts();
+ const available=new Set([
+   ...(state.paymentMethods||[]),
+   ...(state.records||[]).map(r=>r.direction==='expense'?(isOnnuri(r)?'온누리상품권':r.payment||r.bankPayment):'')
+ ].map(paymentLabelKey).filter(x=>x&&!isPaymentMonthMarker(x)&&!hidden.has(x)));
+ return [...available].sort((a,b)=>Number(!isCardPayment(a))-Number(!isCardPayment(b))||
+   (counts.get(b)||0)-(counts.get(a)||0)||a.localeCompare(b,'ko'));
 }
 function canonicalCategory(group,category,subcategory){
  let major=String(category||''),minor=String(subcategory||'');
@@ -547,15 +568,17 @@ function editTax(action,group,major,minor,name){
    state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
  }else if(action==='rename-payment'){
    if(paymentChoices().includes(next))throw Error('동일한 결제수단이 있습니다.');
-   if(!state.paymentMethods.includes(major))throw Error('목록에 없는 결제수단입니다.');
-   state.paymentMethods[state.paymentMethods.indexOf(major)]=next;
+   if(!paymentChoices().includes(major))throw Error('목록에 없는 결제수단입니다.');
+   state.paymentMethods=(state.paymentMethods||[]).filter(x=>paymentLabelKey(x)!==major);
+   state.paymentMethods.push(next);
+   if(!state.hiddenPaymentMethods.includes(major))state.hiddenPaymentMethods.push(major);
    if(state.hiddenPaymentMethods.includes(next))state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
    // Keep imported card statement text unchanged; only manual entry labels may change.
    for(const x of state.records)if(x.source==='manual'&&x.payment===major)x.payment=next;
    for(const x of sheetData.rows)if(x.payment===major)x.payment=next;
  }else if(action==='hide-payment'){
    if(!paymentChoices().includes(major))throw Error('결제수단을 찾을 수 없습니다.');
-   state.paymentMethods=state.paymentMethods.filter(x=>x!==major);
+   state.paymentMethods=(state.paymentMethods||[]).filter(x=>paymentLabelKey(x)!==major);
    if(!state.hiddenPaymentMethods.includes(major))state.hiddenPaymentMethods.push(major);
  }else throw Error('알 수 없는 분류 편집입니다.');
  return true;
@@ -580,12 +603,19 @@ function categoriesPage(){
    '<button class="btn subtle" type="submit">＋ 추가</button></form></div></div>').join('')+
   '<form class="tax-line tax-add" data-tax-action="add-major" data-tax-group="'+E(group)+'"><b>대분류</b><input name="value" maxlength="80" required placeholder="새 대분류">'+
   '<button class="btn primary" type="submit">＋ 추가</button></form></div></section>').join('');
- const paymentList=paymentChoices().map(pay=>
+ const paymentUsage=paymentUsageCounts();
+ const paymentRow=pay=>
   '<form class="tax-line" data-tax-action="rename-payment" data-tax-major="'+E(pay)+'"><span>'+
-  (BANKSALAD_CARDS.includes(pay)?'카드':BANKSALAD_EPAY.includes(pay)?'간편결제':BANKSALAD_ACCOUNTS.includes(pay)?'계좌':'수동결제')+'</span>'+
+  (isCardPayment(pay)?'카드':BANKSALAD_EPAY.includes(pay)?'간편결제':BANKSALAD_ACCOUNTS.includes(pay)?'계좌':'결제방식')+'</span>'+
   '<input name="value" maxlength="80" required value="'+E(pay)+'">'+
+  '<small class="payment-use-count">'+(paymentUsage.get(pay)||0).toLocaleString('ko-KR')+'건</small>'+
   '<button class="btn subtle" type="submit">이름 변경</button>'+
-  (state.paymentMethods.includes(pay)?'<button type="button" class="btn danger-outline" data-tax-hide="hide-payment" data-tax-major="'+E(pay)+'">숨기기</button>':'')+'</form>').join('');
+  '<button type="button" class="btn danger-outline" data-tax-hide="hide-payment" data-tax-major="'+E(pay)+'">숨기기</button></form>';
+ const paymentOptions=paymentChoices();
+ const paymentList='<h3 class="payment-group-heading">카드 · 사용 횟수순</h3>'+
+  paymentOptions.filter(isCardPayment).map(paymentRow).join('')+
+  '<h3 class="payment-group-heading">그 외 결제수단 · 사용 횟수순</h3>'+
+  paymentOptions.filter(pay=>!isCardPayment(pay)).map(paymentRow).join('');
  return pageIntro('CATEGORY MANAGER','분류 관리','사용처·지출 종류·대분류·소분류·결제수단을 직접 관리합니다. 검색 입력에서 기존 항목을 선택하거나 새로운 이름을 저장할 수도 있습니다.')+
  '<section class="surface bank-baseline-info"><div class="surface-head"><div><h2>뱅크샐러드 기반 기본값</h2><p>소비지출 대분류 13개 · 식비는 외식/배달만 · 온라인쇼핑은 구매처별 · 결제수단은 원본 32종 및 수동 입력 4종</p></div>'+
  '<button type="button" class="btn subtle" id="restore-bank-presets">기본 분류 복원</button></div></section>'+
@@ -593,7 +623,7 @@ function categoriesPage(){
  '<form class="tax-line tax-add" data-tax-action="add-scope"><b>새 사용처</b><input name="value" required maxlength="80" placeholder="사용처 추가"><button class="btn primary">＋ 추가</button></form></div></section>'+
  '<section class="surface"><div class="surface-head"><h2>지출 종류</h2></div><div class="tax-body">'+labelControls(Object.entries(GROUP),'rename-group')+
  '<form class="tax-line tax-add" data-tax-action="add-group"><b>새 지출 종류</b><input name="value" maxlength="80" required placeholder="지출 종류 추가"><button class="btn primary">＋ 추가</button></form></div></section></div>'+
- sections+'<section class="surface"><div class="surface-head"><div><h2>카드 · 결제수단</h2><p>뱅크샐러드 엑셀의 실제 카드·간편결제·계좌명을 기본으로 표시합니다. 원본 결제명은 수정하지 않습니다.</p></div></div>'+
+ sections+'<section class="surface"><div class="surface-head"><div><h2>카드 · 결제수단</h2><p>카드와 그 외 결제방식을 각각 실제 지출 사용 횟수 순으로 정렬합니다. 같은 카드의 과거 별칭은 합산하고, 기존 거래의 원문은 보존합니다.</p></div></div>'+
  '<div class="tax-body">'+paymentList+'<form class="tax-line tax-add" data-tax-action="add-payment"><b>새 결제수단</b><input name="value" required maxlength="80" placeholder="결제수단 추가">'+
  '<button class="btn primary">＋ 추가</button></form></div></section>'+
  '<div class="notice"><b>원본 보존</b><p>분류 이름만 바꾸며 거래 금액은 변경되지 않습니다. 원본 카드 정보는 그대로 유지하고, 자동분류 규칙은 변경된 이름으로 연결합니다.</p></div>';
