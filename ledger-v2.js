@@ -652,7 +652,7 @@ function sheetPage(){
 }
 function readSheetCells(){
  const table=$('#sheet-entry-table');if(!table)return;
- const rows=$('tbody tr',table);
+ const rows=Array.from(table.querySelectorAll('tbody tr'));
  sheetData.rows=rows.map((tr,index)=>{
    const prev=sheetData.rows[index]||{};
    const out={...prev,scopeManual:!!prev.scopeManual};
