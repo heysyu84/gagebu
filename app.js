@@ -229,8 +229,8 @@
   const isoDate=value=>{const raw=String(value||'').trim().replace(/[./]/g,'-');const m=raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);if(!m)return '';const y=+m[1],month=+m[2],day=+m[3];if(month<1||month>12||day<1||day>new Date(y,month,0).getDate())return '';return `${y}-${pad(month)}-${pad(day)}`};
   const batchCell=(i,f,value='',kind=sheetKind)=>{
     const common=`class="grid-cell" data-grid="sheet" data-row="${i}" data-col="${f}" aria-label="${i+1}행 ${fieldLabel[f]}"`;
-    if(f==='area')return `<select ${common}>${[['personal','개인'],['business','편의점'],['review','확인 필요'],['transfer','저축/이체']].map(([k,n])=>`<option value="${k}" ${(value||((kind==='income')?'business':'personal'))===k?'selected':''}>${n}</option>`).join('')}</select>`;
-    if(f==='category')return `<input ${common} list="sheet-category-list" value="${esc(value)}" placeholder="대분류">`;
+    if(f==='area')return `<select ${common} aria-haspopup="listbox" aria-expanded="false">${[['personal','개인'],['business','편의점'],['review','확인 필요'],['transfer','저축/이체']].map(([k,n])=>`<option value="${k}" ${(value||((kind==='income')?'business':'personal'))===k?'selected':''}>${n}</option>`).join('')}</select>`;
+    if(f==='category')return `<input ${common} value="${esc(value)}" placeholder="대분류" autocomplete="off" aria-haspopup="listbox" aria-expanded="false">`;
     if(f==='subcategory')return `<input ${common} list="sheet-sub-${i}" value="${esc(value)}" placeholder="선택/직접 입력"><datalist id="sheet-sub-${i}"></datalist>`;
     if(f==='payment')return `<input ${common} list="sheet-pay-list" value="${esc(value)}" placeholder="결제수단">`;
     if(f==='amount')return `<input ${common} type="text" inputmode="decimal" value="${esc(value)}" placeholder="0">`;
@@ -238,17 +238,88 @@
   };
   const batchRow=(i,obj={})=>`<tr data-grid-row="${i}"><th scope="row" class="sheet-row-num">${i+1}</th>${fields.map(f=>`<td>${batchCell(i,f,obj[f]??(f==='date'?sheetDate:''))}</td>`).join('')}</tr>`;
   const sheetPage=()=>{
-    const cats=allCats(),pays=allPays();
+    const pays=allPays();
     return intro('SHEET ENTRY','시트형 일괄 입력','같은 날짜 거래를 여러 줄로 적고 한 번에 저장합니다. 열을 원하는 순서로 채우거나 엑셀에서 복사한 칸을 붙여넣을 수 있습니다.',`<button class="btn" data-page="quick">1건씩 입력</button>`)+
-    `<section class="panel"><div class="sheet-toolbar"><label>입력 종류 <select id="sheet-kind" class="select"><option value="expense" ${sheetKind==='expense'?'selected':''}>지출</option><option value="income" ${sheetKind==='income'?'selected':''}>수입</option><option value="transfer" ${sheetKind==='transfer'?'selected':''}>이체</option></select></label><label>기본 날짜 <input id="sheet-date" type="date" value="${esc(sheetDate)}"></label><button id="sheet-date-fill" class="btn btn-small">모든 행에 날짜 적용</button><button id="sheet-row-add" class="btn btn-small">＋ 10행</button><button id="sheet-clear" class="btn btn-small">비우기</button></div><div class="sheet-hint">입력 순서는 자유입니다. <kbd>Enter</kbd> 아래 행 · <kbd>Tab</kbd> 옆 칸 · <kbd>↑↓←→</kbd> 셀 이동 · <kbd>Ctrl+V</kbd> 여러 칸 붙여넣기. 빈 금액 행은 저장되지 않습니다.</div><div class="sheet-scroll"><table class="sheet-table" id="sheet-grid"><thead><tr><th scope="col">#</th>${fields.map(f=>`<th scope="col">${fieldLabel[f]}</th>`).join('')}</tr></thead><tbody id="sheet-rows">${Array.from({length:20},(_,i)=>batchRow(i)).join('')}</tbody></table></div><datalist id="sheet-category-list">${cats.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist><datalist id="sheet-pay-list">${pays.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist><div class="sheet-footer"><div id="sheet-count">입력할 거래 0건</div><button id="sheet-save" class="btn btn-primary">✓ 작성된 거래 한 번에 저장</button></div></section>`+
+    `<section class="panel"><div class="sheet-toolbar"><label>입력 종류 <select id="sheet-kind" class="select"><option value="expense" ${sheetKind==='expense'?'selected':''}>지출</option><option value="income" ${sheetKind==='income'?'selected':''}>수입</option><option value="transfer" ${sheetKind==='transfer'?'selected':''}>이체</option></select></label><label>기본 날짜 <input id="sheet-date" type="date" value="${esc(sheetDate)}"></label><button id="sheet-date-fill" class="btn btn-small">모든 행에 날짜 적용</button><button id="sheet-row-add" class="btn btn-small">＋ 10행</button><button id="sheet-clear" class="btn btn-small">비우기</button></div><div class="sheet-hint">입력 순서는 자유입니다. <kbd>Enter</kbd> 구분·대분류 메뉴 열기/선택 · <kbd>↑↓←→</kbd> 셀 이동 (메뉴가 열리면 ↑↓ 항목 선택) · <kbd>Tab</kbd> 다음 칸 · <kbd>Esc</kbd> 메뉴 닫기 · <kbd>Ctrl+V</kbd> 여러 칸 붙여넣기. 빈 금액 행은 저장되지 않습니다.</div><div class="sheet-scroll"><table class="sheet-table" id="sheet-grid"><thead><tr><th scope="col">#</th>${fields.map(f=>`<th scope="col">${fieldLabel[f]}</th>`).join('')}</tr></thead><tbody id="sheet-rows">${Array.from({length:20},(_,i)=>batchRow(i)).join('')}</tbody></table></div><datalist id="sheet-pay-list">${pays.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist><div class="sheet-footer"><div id="sheet-count">입력할 거래 0건</div><button id="sheet-save" class="btn btn-primary">✓ 작성된 거래 한 번에 저장</button></div></section>`+
     card('월말 가게 매출','매월 마지막 날에 한 건만 등록합니다. 이미 입력된 월은 중복 생성하지 않고 기존 기록 수정을 확인합니다.',`<form id="monthly-sales-form"><div class="monthly-sales-form"><label>매출 월 <input name="month" type="month" required value="${esc(sheetDate.slice(0,7))}"></label><label>가게 매출액 · 원 <input name="amount" inputmode="numeric" placeholder="월 매출 합계" required></label><label>메모 <input name="note" placeholder="월말 정산 메모 (선택)"></label><button class="btn btn-primary" type="submit">월 매출 저장</button></div></form>`);
   };
   const getSheetCells=()=>[...document.querySelectorAll('#sheet-rows tr')].map(tr=>Object.fromEntries(fields.map(f=>[f,tr.querySelector(`[data-col="${f}"]`)?.value||''])));
   const reindexGrid=()=>{const rows=[...document.querySelectorAll('#sheet-rows tr')];for(let i=0;i<rows.length;i++){rows[i].dataset.gridRow=i;rows[i].querySelector('.sheet-row-num').textContent=i+1;rows[i].querySelectorAll('[data-grid="sheet"]').forEach(x=>{x.dataset.row=i;x.setAttribute('aria-label',`${i+1}행 ${fieldLabel[x.dataset.col]}`)})}};
   const addBatchRows=(count=10)=>{const body=document.querySelector('#sheet-rows');if(!body)return;const start=body.children.length;if(start+count>300){toast('한 번에 최대 300행을 입력할 수 있습니다.');return}body.insertAdjacentHTML('beforeend',Array.from({length:count},(_,i)=>batchRow(start+i)).join(''));for(let i=start;i<start+count;i++)fillSubChoices(i)};
   const fillSubChoices=i=>{const tr=document.querySelector(`#sheet-rows tr[data-grid-row="${i}"]`);if(!tr)return;const cat=tr.querySelector('[data-col="category"]')?.value||'',options=tr.querySelector('datalist[id^="sheet-sub-"]');if(options)options.innerHTML=subcategories(cat).map(x=>`<option value="${esc(x)}"></option>`).join('')};
+
+  // Consistent Enter/arrow picker for sheet Area and Main Category.
+  let sheetPicker=null;
+  const closeSheetPicker=()=>{
+    if(!sheetPicker)return;
+    const {cell,panel}=sheetPicker;
+    cell.setAttribute('aria-expanded','false');
+    cell.removeAttribute('aria-controls');
+    cell.removeAttribute('aria-activedescendant');
+    panel.remove();sheetPicker=null;
+  };
+  const markSheetPicker=()=>{
+    if(!sheetPicker)return;
+    const {panel,cell,active}=sheetPicker;
+    panel.querySelectorAll('[data-choice-index]').forEach((item,i)=>{
+      const on=i===active;item.classList.toggle('active',on);
+      item.setAttribute('aria-selected',String(on));
+    });
+    const selected=panel.querySelector('[data-choice-index="'+active+'"]');
+    if(selected){
+      cell.setAttribute('aria-activedescendant',selected.id);
+      if(selected.offsetTop<panel.scrollTop)panel.scrollTop=selected.offsetTop;
+      else if(selected.offsetTop+selected.offsetHeight>panel.scrollTop+panel.clientHeight)
+        panel.scrollTop=selected.offsetTop+selected.offsetHeight-panel.clientHeight;
+    }
+  };
+  const openSheetPicker=(cell,filter=false)=>{
+    if(cell?.dataset.grid!=='sheet'||!['area','category'].includes(cell.dataset.col))return;
+    closeSheetPicker();
+    const area=cell.dataset.col==='area';
+    const items=area?[...cell.options].map(x=>({value:x.value,label:x.textContent})):
+      allCats().map(x=>({value:x,label:x}));
+    const query=filter?cell.value.trim().toLocaleLowerCase('ko'):'';
+    const options=query?items.filter(x=>x.label.toLocaleLowerCase('ko').includes(query)):items;
+    const rect=cell.getBoundingClientRect(),vpWidth=document.documentElement.clientWidth;
+    const width=Math.min(Math.max(rect.width,175),vpWidth-16);
+    const panel=document.createElement('div');
+    panel.className='sheet-choice-picker';
+    panel.id='sheet-choice-list';
+    panel.setAttribute('role','listbox');
+    panel.setAttribute('aria-label',area?'구분 선택':'대분류 선택');
+    panel.style.width=width+'px';
+    panel.style.left=Math.max(8,Math.min(rect.left,vpWidth-width-8))+'px';
+    const above=rect.top,beneath=window.innerHeight-rect.bottom;
+    const upward=beneath<160&&above>beneath;
+    panel.style.maxHeight=Math.max(80,Math.min(248,(upward?above:beneath)-12))+'px';
+    if(upward)panel.style.bottom=(window.innerHeight-rect.top+3)+'px';
+    else panel.style.top=(rect.bottom+3)+'px';
+    panel.innerHTML=options.length?options.map((opt,i)=>
+      '<button type="button" class="sheet-choice-option" data-choice-index="'+i+'" id="sheet-choice-option-'+i+'" role="option" aria-selected="false">'+esc(opt.label)+'</button>'
+    ).join(''):'<div class="sheet-choice-empty">일치하는 분류가 없습니다. 직접 입력할 수 있습니다.</div>';
+    document.body.appendChild(panel);
+    cell.setAttribute('aria-expanded','true');
+    cell.setAttribute('aria-controls',panel.id);
+    const selectedIndex=options.findIndex(x=>x.value===cell.value);
+    sheetPicker={cell,panel,options,active:selectedIndex>=0?selectedIndex:options.length?0:-1};
+    markSheetPicker();
+  };
+  const chooseSheetPicker=index=>{
+    if(!sheetPicker)return;
+    const {cell,options}=sheetPicker,chosen=options[index];
+    closeSheetPicker();
+    if(!chosen)return;
+    if(cell.value!==chosen.value){
+      cell.value=chosen.value;
+      cell.dispatchEvent(new Event('input',{bubbles:true}));
+      cell.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    cell.focus();
+  };
   const activeCell=(grid,row,col)=>document.querySelector(`[data-grid="${grid}"][data-row="${row}"][data-col="${col}"]`);
   const moveGrid=(grid,row,col,dy,dx)=>{
+    closeSheetPicker();
     const cols=grid==='sheet'?fields:['commission','handle'];const nextCol=Math.max(0,Math.min(cols.length-1,cols.indexOf(col)+dx));let nextRow=Math.max(0,row+dy);
     if(grid==='sheet'&&!activeCell(grid,nextRow,cols[nextCol])&&nextRow<300)addBatchRows(10);
     const t=activeCell(grid,nextRow,cols[nextCol]);if(t){t.focus();t.select?.();return true}return false;
@@ -464,21 +535,77 @@
   }));
   document.addEventListener('input',e=>safeClick(()=>{
     const el=e.target;
-    if(el.dataset.grid==='sheet'){if(el.dataset.col==='category'){fillSubChoices(Number(el.dataset.row));const row=el.closest('tr');const area=row.querySelector('[data-col="area"]');if(!area.dataset.manual){const cat=el.value;if(['담배 발주','발주','가게'].includes(cat))area.value='business';else if(cat==='저축')area.value='transfer';else if(cat==='세금')area.value='review';else if(cat)area.value='personal';}}countSheetRows();return}
+    if(el.dataset.grid==='sheet'){if(el.dataset.col==='category'){if(sheetPicker?.cell===el)openSheetPicker(el,true);fillSubChoices(Number(el.dataset.row));const row=el.closest('tr');const area=row.querySelector('[data-col="area"]');if(!area.dataset.manual){const cat=el.value;if(['담배 발주','발주','가게'].includes(cat))area.value='business';else if(cat==='저축')area.value='transfer';else if(cat==='세금')area.value='review';else if(cat)area.value='personal';}}countSheetRows();return}
     if(el.id==='f-query'){const start=el.selectionStart||0;filters.query=el.value;ledgerOffset=0;render();const next=document.querySelector('#f-query');next.focus();next.setSelectionRange(start,start);return}
     if(el.id==='tx-cat'){selectCategory();refreshSub();return}
     if(el.id==='tx-money'||(el.closest('#lotto-form')&&['handle','commission'].includes(el.name))){const pos=el.selectionStart,old=el.value,clean=old.replace(/[^\d]/g,'');el.value=clean?fmt(Number(clean)):'';if(typeof pos==='number')el.setSelectionRange(el.value.length,el.value.length)}
   }));
   document.addEventListener('paste',e=>{const grid=e.target?.dataset?.grid;if(grid==='sheet'||grid==='lotto')gridPaste(e,grid)});
-  document.addEventListener('keydown',e=>{
-    const grid=e.target?.dataset?.grid;if(grid==='sheet'||grid==='lotto'){
-      const row=Number(e.target.dataset.row),col=e.target.dataset.col;
-      if(e.key==='Enter'){e.preventDefault();moveGrid(grid,row,col,e.shiftKey?-1:1,0);return}
-      if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();moveGrid(grid,row,col,e.key==='ArrowUp'?-1:1,0);return}
-      if(e.key==='ArrowLeft'&&e.target.tagName==='INPUT'&&e.target.selectionStart===0){e.preventDefault();moveGrid(grid,row,col,0,-1);return}
-      if(e.key==='ArrowRight'&&e.target.tagName==='INPUT'&&e.target.selectionStart===e.target.value.length){e.preventDefault();moveGrid(grid,row,col,0,1);return}
+
+  document.addEventListener('pointerdown',e=>{
+    if(sheetPicker?.panel.contains(e.target)){
+      const item=e.target.closest?.('[data-choice-index]');
+      if(item){e.preventDefault();chooseSheetPicker(Number(item.dataset.choiceIndex))}
+      return;
     }
-    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();editId=null;go('quick')}if(e.key==='Escape')document.querySelector('#sidebar').classList.remove('open')});
+    const area=e.target.closest?.('[data-grid="sheet"][data-col="area"]');
+    if(area){
+      e.preventDefault();area.focus();
+      if(sheetPicker?.cell===area)closeSheetPicker();else openSheetPicker(area);
+      return;
+    }
+    if(sheetPicker&&e.target!==sheetPicker.cell)closeSheetPicker();
+  },true);
+  document.addEventListener('click',e=>{
+    const category=e.target.closest?.('[data-grid="sheet"][data-col="category"]');
+    if(category&&sheetPicker?.cell!==category)openSheetPicker(category);
+  });
+  document.addEventListener('focusin',e=>{
+    if(sheetPicker&&e.target!==sheetPicker.cell&&!sheetPicker.panel.contains(e.target))closeSheetPicker();
+  });
+  document.addEventListener('scroll',e=>{
+    if(sheetPicker&&!sheetPicker.panel.contains(e.target))closeSheetPicker();
+  },true);
+  document.addEventListener('keydown',e=>{
+    const grid=e.target?.dataset?.grid;
+    if(grid==='sheet'||grid==='lotto'){
+      const row=Number(e.target.dataset.row),col=e.target.dataset.col;
+      const pickable=grid==='sheet'&&(col==='area'||col==='category');
+      if(sheetPicker?.cell===e.target){
+        if(e.key==='Escape'){e.preventDefault();closeSheetPicker();return}
+        if(e.key==='Enter'){e.preventDefault();chooseSheetPicker(sheetPicker.active);return}
+        if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+          e.preventDefault();
+          if(sheetPicker.options.length){
+            sheetPicker.active=Math.max(0,Math.min(sheetPicker.options.length-1,sheetPicker.active+(e.key==='ArrowUp'?-1:1)));
+            markSheetPicker();
+          }
+          return;
+        }
+        if(e.key==='Home'||e.key==='End'){
+          e.preventDefault();sheetPicker.active=e.key==='Home'?0:sheetPicker.options.length-1;markSheetPicker();return;
+        }
+        if(e.key==='Tab'){closeSheetPicker();return}
+        if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+          e.preventDefault();moveGrid(grid,row,col,0,e.key==='ArrowLeft'?-1:1);return;
+        }
+      }
+      if(e.key==='Enter'){
+        e.preventDefault();
+        if(pickable)openSheetPicker(e.target);
+        // Enter does not move to another cell.
+        return;
+      }
+      if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();moveGrid(grid,row,col,e.key==='ArrowUp'?-1:1,0);return}
+      if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&
+        (e.target.tagName==='SELECT'||(e.target.tagName==='INPUT'&&
+         (e.key==='ArrowLeft'?e.target.selectionStart===0:e.target.selectionStart===e.target.value.length)))){
+        e.preventDefault();moveGrid(grid,row,col,0,e.key==='ArrowLeft'?-1:1);return;
+      }
+    }
+    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();editId=null;go('quick')}
+    if(e.key==='Escape')document.querySelector('#sidebar').classList.remove('open');
+  });
   window.addEventListener('storage',e=>{if(e.key===KEY){try{db=e.newValue?JSON.parse(e.newValue):empty();if(upgrade(db))save();render();toast('다른 탭에서 변경된 장부를 새로 불러왔습니다.')}catch(_){}}});
   if(location.hash.slice(1) in views)page=location.hash.slice(1);period='all';render();if(apiBase&&apiToken)void pullServer(true);
 })();
