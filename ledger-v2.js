@@ -16,6 +16,7 @@ const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입�
 const isOnnuri=x=>x.onnuri===true||(!('onnuri' in x)&&/온누리/.test(String(x.payment||'')));
 const paymentLabel=x=>isOnnuri(x)?'온누리상품권':String(x.payment||'—');
 const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(String(x.payment||''))?'':x.payment)||''):'';
+const onnuriLinkedCard=x=>isOnnuri(x)?String(x.onnuriLinkedCard||''):'';
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
@@ -354,6 +355,7 @@ function transactionTable(items,compact=false){
  '<td class="merchant-col"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><small>'+E((x.source==='bank'?'뱅크샐러드':x.sourceSheet||SOURCE[x.source]||'직접 입력'))+'</small></td>'+
  '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
   (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
+  (onnuriLinkedCard(x)?'<small>온누리 연동 카드 (사용자 확인): '+E(onnuriLinkedCard(x))+'</small>':'')+
   (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
  '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
  (x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
@@ -365,7 +367,7 @@ function reviewCard(x,i){
  const suggest=x.matchCandidate?'<span class="match-flag">원장에 유사한 거래가 있습니다 · 중복 확인 필요</span>':'';
  return '<article class="review-card" data-review-id="'+E(x.id)+'"><div class="review-index">'+String(i+1).padStart(2,'0')+'</div><div class="review-main"><div class="review-top"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><span>−'+won(x.amount)+'</span></div>'+
  '<div class="review-metadata">'+E(x.date)+' · '+E(paymentLabel(x))+
-  (registeredCard(x)?' (등록 카드: '+E(registeredCard(x))+')':'')+
+  (registeredCard(x)?' (뱅샐 원본 카드: '+E(registeredCard(x))+')':'')+(onnuriLinkedCard(x)?' (온누리 연동 카드: '+E(onnuriLinkedCard(x))+')':'')+
   ' · '+E([x.bankMajor,x.bankMinor].filter(Boolean).join(' / '))+'</div>'+onnuriCheckbox(x,'review')+
  '<p class="review-reason">'+E(x.reason||'분류 확인 필요')+'</p>'+suggest+
  '<div class="review-choices"><button data-scope="personal" data-id="'+E(x.id)+'" class="choice personal"><b>1</b> 개인 소비</button>'+
@@ -1032,7 +1034,7 @@ function importPage(){
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
  '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>JSON 안전 병합</h2><p>오래된 V2 백업이나 기존 시트 이관 JSON도 기존 장부를 덮어쓰지 않습니다. 같은 거래는 유지하고 없는 거래·날짜만 추가하며, 변경 전 복구용 JSON을 다운로드합니다.</p></div></div>'+
- '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 이관 파일 · 데이터 백업 파일</small></label>'+
+ '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 이관 · 데이터 백업 · 확인된 거래 수정 패치</small></label>'+
  '<div class="notice compact"><b>기존 데이터 보존 · 전체 덮어쓰기 금지</b><p>오래된 파일을 선택해도 기존 거래, 직접 수정한 분류, 온누리 체크와 사용자 규칙은 유지됩니다. 동일 거래의 과거 분류는 자동으로 되돌리지 않습니다.</p></div></section></div>'+
  (preview?importPreview():importEmpty())+
  '<div class="notice"><b>전액을 자동으로 지출 처리하지 않습니다.</b><p>온누리상품권 충전, 카드대금 납부, 주식투자, 토토 운영대금과 고객 송금은 제외합니다. 월세·가게 임대료는 확인된 수취인·금액만 예외 처리합니다.</p></div>';
@@ -1539,11 +1541,50 @@ function planSafeLedgerMerge(current,incoming){
    oldFile:!!(currentLast&&incomingLast&&incomingLast<currentLast),
    currentLast,incomingLast};
 }
+
+function planOnnuriCorrections(current,patch){
+ if(patch?.format!=='gagebu-v2-corrections'||patch?.version!==1||!Array.isArray(patch.corrections))throw Error('수정 패치 형식 오류');
+ const byId=new Map((current.records||[]).map(r=>[String(r.id),r]));
+ const changes=[],seen=new Set();let unchanged=0,missing=0,conflicts=0;
+ for(const entry of patch.corrections){
+   if(!entry||typeof entry.id!=='string'||seen.has(entry.id)||!entry.match||!entry.set||
+      Object.keys(entry.set).some(k=>!['onnuriLinkedCard','onnuriCardSource','onnuri','onnuriManual'].includes(k)))throw Error('수정 패치 구성 오류');
+   seen.add(entry.id);
+   const r=byId.get(entry.id);
+   if(!r){missing++;continue}
+   if(r.date!==entry.match.date||r.amount!==entry.match.amount||r.direction!=='expense'||
+      r.payment!==entry.match.payment||r.onnuri===false){conflicts++;continue}
+   if(entry.set.onnuriLinkedCard!=='The CLASSIC-Y'||entry.set.onnuriCardSource!=='user-confirmed'||
+      entry.set.onnuri!==true||entry.set.onnuriManual!==true)throw Error('확인되지 않은 카드 지정');
+   if(r.onnuriLinkedCard&&r.onnuriLinkedCard!==entry.set.onnuriLinkedCard){conflicts++;continue}
+   if(Object.entries(entry.set).every(([k,v])=>r[k]===v)){unchanged++;continue}
+   changes.push({id:entry.id,date:r.date,amount:r.amount,set:entry.set});
+ }
+ return {changes,unchanged,missing,conflicts};
+}
+function applyOnnuriCorrections(patch,filename){
+ let result;try{result=planOnnuriCorrections(state,patch)}catch(err){toast('수정 파일 오류: '+err.message);return}
+ if(!result.changes.length){toast('수정할 거래 없음 · 이미 반영 '+result.unchanged+'건 / 미등록 '+result.missing+'건 / 내용 불일치 '+result.conflicts+'건');return}
+ if(!confirm('확인된 온누리 연동 카드 '+result.changes.length+'건을 수정합니다.\n'+
+   result.changes.map(x=>x.date+' · '+won(x.amount)).join('\n')+
+   '\n\n기존 금액, 결제수단, 거래처, 은행 원본 정보는 유지합니다.'+
+   (result.missing||result.conflicts?'\n미등록 '+result.missing+'건 · 내용 불일치 '+result.conflicts+'건은 변경하지 않습니다.':'')+
+   '\n\n수정 전 JSON을 자동 백업합니다. 계속할까요?'))return;
+ try{download('가게부_V2_수정전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+   JSON.stringify(state,null,2),'application/json;charset=utf-8')}
+ catch(err){toast('백업 생성 실패. 자료를 변경하지 않았습니다.');return}
+ const previous=state,mapping=new Map(result.changes.map(x=>[x.id,x.set]));
+ state={...state,records:state.records.map(r=>mapping.has(String(r.id))?{...r,...mapping.get(String(r.id))}:r),
+   imports:[...(state.imports||[]),{at:new Date().toISOString(),name:filename,source:'onnuri-user-confirmed-correction',updated:result.changes.length}]};
+ if(!save()){state=previous;return}
+ render();toast('온누리 연동카드 '+result.changes.length+'건 수정 완료');
+}
 async function importLegacy(file){
  if(!file)return;
  let raw,incoming;
  try{
    raw=JSON.parse(await file.text());
+   if(raw?.format==='gagebu-v2-corrections'){applyOnnuriCorrections(raw,file.name);return}
    incoming=raw?.version===2&&Array.isArray(raw.records)?raw:{
      version:2,records:migrateLegacy(raw),
      dailyLotto:Array.isArray(raw?.dailyLotto)?raw.dailyLotto:[],
@@ -1657,7 +1698,7 @@ function editRecord(id){
  f.elements.onnuri.checked=r?isOnnuri(r):false;
  f.elements.onnuri.dataset.onnuriTouched='0';
  f.elements.onnuri.dataset.onnuriAuto=r?.onnuriAuto?'1':'0';
- const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:(r?.payment?'원본 결제수단: '+r.payment:'');
+ const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=[r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:'',r?.onnuriLinkedCard?'온누리 연동 카드 (사용자 확인): '+r.onnuriLinkedCard:'',!r?.bankPayment&&!r?.onnuriLinkedCard&&r?.payment?'원본 결제수단: '+r.payment:''].filter(Boolean).join(' · ');
  f.elements.scope.innerHTML=sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),r?.scope||'personal');
  f.elements.ledgerType.innerHTML=sheetOptions(Object.entries(GROUP),r?.ledgerType||'consumption');
  f.elements.scope.value=r?.scope||'personal';
