@@ -45,7 +45,7 @@
   // Cloudflare D1 backing store. No API password or ledger JSON is embedded in GitHub Pages.
   const API_CONFIG='store-ledger-private-api-url',SESSION='store-ledger-private-session',PENDING='store-ledger-sync-pending';
   let apiBase=localStorage.getItem(API_CONFIG)||'',apiToken=sessionStorage.getItem(SESSION)||'',serverVersion=null;
-  let connected=false,syncInFlight=false,syncQueued=false,syncBlocked=false,loadingRemote=false;
+  let connected=false,syncInFlight=false,syncQueued=false,syncBlocked=false,loadingRemote=false,awaitingInitialUpload=false;
   const setSyncLabel=msg=>{const tag=document.querySelector('.local-badge');if(tag)tag.innerHTML=`<span class="privacy-dot"></span> ${esc(msg)}`;};
   const apiCall=async(path,options={})=>{
     if(!apiBase)throw Error('서버 주소 미설정');
@@ -63,7 +63,7 @@
     try{
       const snapshot=JSON.parse(JSON.stringify(db));
       const result=await apiCall('/api/state',{method:'PUT',body:{version:serverVersion,data:snapshot}});
-      serverVersion=result.version;localStorage.removeItem(PENDING);setSyncLabel('서버 저장됨');
+      serverVersion=result.version;awaitingInitialUpload=false;localStorage.removeItem(PENDING);setSyncLabel('서버 저장됨');
     }catch(err){
       syncBlocked=err.status===409||err.status===401;
       localStorage.setItem(PENDING,'1');setSyncLabel(syncBlocked?'저장 충돌 · 확인 필요':'서버 저장 오류');
@@ -93,10 +93,10 @@
         return;
       }
       if(remote.transactions.length===0&&remote.dailyLotto.length===0&&db.transactions.length){
-        setSyncLabel('서버 비어 있음 · 업로드 필요');
+        awaitingInitialUpload=true;setSyncLabel('서버 비어 있음 · 업로드 필요');
         toast('서버가 비어 있습니다. 데이터 관리에서 기존 장부를 서버에 최초 등록할 수 있습니다.');return;
       }
-      loadingRemote=true;db={...empty(),...remote};upgrade(db);
+      awaitingInitialUpload=false;loadingRemote=true;db={...empty(),...remote};upgrade(db);
       localStorage.setItem(KEY,JSON.stringify(db));loadingRemote=false;
       setSyncLabel('서버 저장 연결됨');render();
       if(!initial)toast('서버에 저장된 최신 장부를 불러왔습니다.');
@@ -106,7 +106,7 @@
     }
   };
   const serverSettings=()=>card('서버 저장 · 기기 간 동기화','Cloudflare Worker/D1 배포 후 연결합니다. 서버가 연결되기 전에는 기존처럼 이 브라우저에만 기록됩니다.',
-    `<form id="server-login-form" class="server-connect"><label>개인 API 주소<input name="apiBase" placeholder="https://store-ledger-private-api.계정.workers.dev" value="${esc(apiBase)}" autocomplete="url" required></label><label>관리자 비밀번호<input name="password" type="password" placeholder="Cloudflare에 설정한 비밀번호" autocomplete="current-password" ${connected?'':'required'}></label><button type="submit" class="btn btn-primary">${connected?'다시 로그인':'서버 연결'}</button></form><div class="small-muted mt-10">상태: <b>${!apiBase?'서버 미설정':connected?(syncBlocked?'동기화 충돌 / 확인 필요':`연결됨 · 버전 ${serverVersion??'—'}`):'로그인 필요 또는 연결 끊김'}</b> · 인증 토큰은 이 탭에서만 보관하며 비밀번호는 저장하지 않습니다.</div><div class="form-actions"><button class="btn btn-small" id="server-pull" ${!connected?'disabled':''}>서버 최신 기록 불러오기</button><button class="btn btn-small" id="server-push" ${!connected?'disabled':''}>현재 장부를 서버에 저장</button><button class="btn btn-small" id="server-logout" ${!apiToken?'disabled':''}>서버 로그아웃</button></div><p class="small-muted mt-10">최초 업로드는 서버가 비어 있을 때만 권장합니다. 여러 기기에서 수정한 데이터가 겹치면 자동 덮어쓰지 않습니다. 서버 연결 전에는 로컬 JSON 백업을 보관하세요.</p>`);
+    `<form id="server-login-form" class="server-connect"><label>개인 API 주소<input name="apiBase" placeholder="https://store-ledger-private-api.계정.workers.dev" value="${esc(apiBase)}" autocomplete="url" required></label><label>관리자 비밀번호<input name="password" type="password" placeholder="Cloudflare에 설정한 비밀번호" autocomplete="current-password" ${connected?'':'required'}></label><button type="submit" class="btn btn-primary">${connected?'다시 로그인':'서버 연결'}</button></form><div class="small-muted mt-10">상태: <b>${!apiBase?'서버 미설정':connected?(syncBlocked?'동기화 충돌 / 확인 필요':awaitingInitialUpload?'서버 비어 있음 · 최초 업로드 필요':`연결됨 · 버전 ${serverVersion??'—'}`):'로그인 필요 또는 연결 끊김'}</b> · 인증 토큰은 이 탭에서만 보관하며 비밀번호는 저장하지 않습니다.</div><div class="form-actions"><button class="btn btn-small" id="server-pull" ${!connected?'disabled':''}>서버 최신 기록 불러오기</button><button class="btn btn-small" id="server-push" ${!connected?'disabled':''}>현재 장부를 서버에 저장</button><button class="btn btn-small" id="server-logout" ${!apiToken?'disabled':''}>서버 로그아웃</button></div><p class="small-muted mt-10">최초 업로드는 서버가 비어 있을 때만 권장합니다. 여러 기기에서 수정한 데이터가 겹치면 자동 덮어쓰지 않습니다. 서버 연결 전에는 로컬 JSON 백업을 보관하세요.</p>`);
   const loginServer=async form=>{
     const data=new FormData(form),address=String(data.get('apiBase')||'').trim().replace(/\/$/,'');
     if(!/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/.test(address)){toast('HTTPS 서버 주소를 확인해 주세요.');return}
@@ -331,7 +331,7 @@
   };
 
   const views={dashboard,transactions,quick,sheet:sheetPage,lotto:lottoPage,analysis,recurring,data:dataPage};
-  const render=()=>{document.title=`${NAV[page]} · 가게부`;document.querySelector('#section-title').textContent=NAV[page];document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===page));document.querySelector('#content').innerHTML=views[page]();document.querySelector('#sidebar').classList.remove('open');if(connected)setSyncLabel(syncBlocked?'서버 저장 확인 필요':'서버 저장 연결됨');if(page==='quick')setTimeout(()=>document.querySelector('#tx-money')?.focus(),30);if(page==='sheet'){for(let i=0;i<20;i++)fillSubChoices(i);setTimeout(()=>activeCell('sheet',0,'amount')?.focus(),30)}};
+  const render=()=>{document.title=`${NAV[page]} · 가게부`;document.querySelector('#section-title').textContent=NAV[page];document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===page));document.querySelector('#content').innerHTML=views[page]();document.querySelector('#sidebar').classList.remove('open');if(connected)setSyncLabel(syncBlocked?'서버 저장 확인 필요':awaitingInitialUpload?'최초 업로드 필요':'서버 저장 연결됨');if(page==='quick')setTimeout(()=>document.querySelector('#tx-money')?.focus(),30);if(page==='sheet'){for(let i=0;i<20;i++)fillSubChoices(i);setTimeout(()=>activeCell('sheet',0,'amount')?.focus(),30)}};
   const go=p=>{if(!views[p])p='dashboard';lastView=page;page=p;ledgerOffset=0;lottoOffset=0;render();window.scrollTo({top:0,behavior:'instant'})};
   const download=(name,body,type='application/json;charset=utf-8')=>{const blob=new Blob([body],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)};
   const exportJSON=()=>download(`가게부_백업_${ymd()}.json`,JSON.stringify({...db,backupAt:new Date().toISOString()},null,2));
