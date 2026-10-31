@@ -268,3 +268,28 @@
  .md-recent{margin-top:13px}
 }
 @media(prefers-reduced-motion:reduce){.md-month-pair i{transition:none}}
+
+
+/* Transaction ledger: payment method filter + evidence breakdown */
+.filter-row .payment-filter{flex:0 1 214px;max-width:260px;min-width:150px}
+.payment-filter-breakdown{margin:5px 22px 20px;border:1px solid #dbece5;background:#fbfefc;border-radius:12px;overflow:hidden}
+.payment-filter-breakdown-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:15px 17px;border-bottom:1px solid #e4efe9}
+.payment-filter-breakdown-head>b{font-size:13px;color:#205b4d}
+.payment-filter-breakdown-head>span{font-size:11px;color:#6e8880}
+.payment-filter-breakdown-head>.btn{margin-left:auto;min-height:33px;padding:7px 11px;font-size:10px}
+.payment-filter-breakdown-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:21px;padding:16px 18px 20px}
+.payment-filter-breakdown-cols h3{font-size:12px;color:#446c60;margin:0 0 11px}
+.payment-filter-breakdown-row{display:grid;grid-template-columns:minmax(0,1fr) auto 39px;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #e9f2ed}
+.payment-filter-breakdown-row:last-child{border:0}
+.payment-filter-breakdown-row span{color:#5f796f;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.payment-filter-breakdown-row strong{color:#263f39;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.payment-filter-breakdown-row small{text-align:right;font-size:10px;color:#9aada4}
+.payment-filter-notice{font-size:11px;color:#987237;margin:11px 17px 2px;padding:11px 13px;border:1px solid #f2e5c8;background:#fffaf0;border-radius:8px}
+@media(max-width:760px){
+ .payment-filter-breakdown{margin:5px 13px 14px}
+ .payment-filter-breakdown-cols{grid-template-columns:1fr;padding:13px 14px 17px;gap:18px}
+ .payment-filter-breakdown-head{padding:13px 14px;gap:8px}
+ .payment-filter-breakdown-head>.btn{margin-left:0}
+ .filter-row .payment-filter{flex:1 1 150px;max-width:none}
+ .payment-filter-notice{margin:10px 13px 1px}
+}
