@@ -2,7 +2,7 @@
 
 본 저장소는 사용자가 운영하는 편의점의 장부용이며 **WIND MOON / 풍월관 관리프로그램과 무관**합니다.
 
-공개 사이트: https://heysyu84.github.io/store-ledger/
+공개 사이트: https://heysyu84.github.io/gagebu/
 
 ## 시트형 입력
 
@@ -25,13 +25,13 @@ PC에 Node.js 설치나 PowerShell 명령 입력 없이 진행하는 방법입�
 
 1. [Cloudflare 대시보드](https://dash.cloudflare.com/)에서 편의점 가게부를 배포할 계정을 선택하여 **Account ID**를 확인합니다.
 2. Cloudflare의 **API Tokens → Create Token**에서 이 계정만 대상으로 한 토큰을 생성합니다. D1 데이터베이스 생성·SQL 실행 권한(계정 D1 Edit)과 새 Worker 생성·배포 권한(Workers Admin/필요한 Workers Scripts 권한)이 필요합니다. 권한을 다른 계정까지 확대하지 마세요.
-3. [store-ledger GitHub Actions secrets](https://github.com/heysyu84/store-ledger/settings/secrets/actions)에 아래 네 가지를 추가합니다.
+3. [gagebu GitHub Actions secrets](https://github.com/heysyu84/gagebu/settings/secrets/actions)에 아래 네 가지를 추가합니다.
    - `CLOUDFLARE_ACCOUNT_ID`: 1번 계정 ID
    - `CLOUDFLARE_API_TOKEN`: 2번에서 만든 토큰
    - `STORE_LEDGER_ADMIN_PASSWORD`: 본인만 아는 16자 이상 새 관리자 비밀번호
    - `STORE_LEDGER_SESSION_PEPPER`: 관리자 비밀번호와 **다른** 32자 이상의 무작위 비밀 문자열
-4. [Deploy private ledger API](https://github.com/heysyu84/store-ledger/actions/workflows/deploy-cloudflare.yml) → **Run workflow** → `main` → Run workflow를 누릅니다.
-5. 작업이 **초록색 Success**로 끝나면 실행 로그의 `https://...workers.dev` 주소를 복사합니다. [가게부 사이트](https://heysyu84.github.io/store-ledger/) → 데이터 관리 → 서버 저장에 이 주소와 관리자 비밀번호를 넣고 로그인합니다.
+4. [Deploy private ledger API](https://github.com/heysyu84/gagebu/actions/workflows/deploy-cloudflare.yml) → **Run workflow** → `main` → Run workflow를 누릅니다.
+5. 작업이 **초록색 Success**로 끝나면 실행 로그의 `https://...workers.dev` 주소를 복사합니다. [가게부 사이트](https://heysyu84.github.io/gagebu/) → 데이터 관리 → 서버 저장에 이 주소와 관리자 비밀번호를 넣고 로그인합니다.
 6. 기존 브라우저의 장부를 **JSON으로 먼저 백업**하고, 서버가 비어 있는 것을 확인한 후 처음 한 번만 서버로 올립니다. 실제 금융 데이터를 GitHub 저장소나 GitHub Secrets에 붙여넣지 마세요.
 
 **보안:** API 토큰, 관리자 비밀번호, SESSION_PEPPER는 이 채팅·공개 저장소·스크린샷에 노출하지 마세요.
@@ -59,7 +59,13 @@ npx wrangler deploy
 
 `ADMIN_PASSWORD`는 **길고 고유한 관리자 비밀번호**, `SESSION_PEPPER`는 **별도의 랜덤 문자열**을 입력합니다. 둘 다 GitHub, 브라우저 코드, JSON 파일에 적지 마세요. `wrangler.toml`의 `ALLOWED_ORIGINS`는 접속 사이트가 바뀌는 경우에만 수정하세요.
 
-최초 데이터를 파일 업로드 없이 서버에 이관하려면, 별도로 전달받은 **비공개 초기 적재 SQL**을 `db/schema.sql` 적용 뒤 한 번만 실행할 수도 있습니다. 비공개 SQL은 **GitHub에 올리지 마세요**.\n\n```bash\nnpx wrangler d1 execute store-ledger-private --remote --file=store-ledger-private-initial-seed.sql\n```\n\nWorker가 게시되면 가게부의 `데이터 관리 → 서버 저장`에 `https://....workers.dev` 주소와 관리자 비밀번호를 입력해 로그인합니다. 처음에는 **JSON 백업을 먼저 보관한 후** 기존 장부를 한 번만 서버에 올립니다. 다른 기기에서도 같은 Worker 주소로 로그인하면 서버 기록을 불러옵니다.
+최초 데이터를 파일 업로드 없이 서버에 이관하려면, 별도로 전달받은 **비공개 초기 적재 SQL**을 `db/schema.sql` 적용 뒤 한 번만 실행할 수도 있습니다. 비공개 SQL은 **GitHub에 올리지 마세요**. 
+
+```bash
+npx wrangler d1 execute store-ledger-private --remote --file=store-ledger-private-initial-seed.sql 
+```
+
+Worker가 게시되면 가게부의 `데이터 관리 → 서버 저장`에 `https://....workers.dev` 주소와 관리자 비밀번호를 입력해 로그인합니다. 처음에는 **JSON 백업을 먼저 보관한 후** 기존 장부를 한 번만 서버에 올립니다. 다른 기기에서도 같은 Worker 주소로 로그인하면 서버 기록을 불러옵니다.
 
 ### 데이터 보존 안전장치
 
