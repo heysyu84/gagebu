@@ -196,34 +196,148 @@ function pageIntro(eyebrow,title,desc,right=''){
 function topFilters(){
  return '<div class="filter-row"><select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select><select id="scope-filter" aria-label="사용처"><option value="all">모든 사용처</option>'+Object.entries(LABEL).filter(([k])=>k!=='transfer'&&k!=='excluded').map(([k,v])=>'<option value="'+k+'"'+(scopeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select><select id="type-filter" aria-label="장부 유형"><option value="all">모든 지출 종류</option>'+Object.entries(GROUP).map(([k,v])=>'<option value="'+k+'"'+(typeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select><input id="query-filter" class="search" type="search" autocomplete="off" placeholder="거래처 · 메모 · 결제수단 검색" value="'+E(q)+'"></div>';
 }
+/* Situation board visualizations are derived at render time; never persist
+   aggregates or alter underlying ledger rows. Period controls every figure. */
+let dashboardPayMetric='amount';
+const dashWonShort=value=>{
+ const amount=Math.abs(n(value)),sign=n(value)<0?'−':'';
+ if(amount>=100000000)return sign+(amount/100000000).toLocaleString('ko-KR',{maximumFractionDigits:1})+'억원';
+ if(amount>=10000)return sign+(amount/10000).toLocaleString('ko-KR',{maximumFractionDigits:1})+'만원';
+ return sign+Math.round(amount).toLocaleString('ko-KR')+'원';
+};
+function dashRankList(entries,limit=8,metric='amount'){
+ const sorted=entries.slice().sort((a,b)=>(b[metric]||0)-(a[metric]||0)||a.name.localeCompare(b.name,'ko'));
+ const top=sorted.slice(0,limit),remaining=sorted.slice(limit);
+ if(remaining.length)top.push({name:'그 외 '+remaining.length+'개',amount:sum(remaining),count:remaining.reduce((v,x)=>v+x.count,0),isOther:true});
+ const max=Math.max(1,...top.filter(x=>!x.isOther).map(x=>n(x[metric])));
+ return top.length?'<div class="md-rank-list">'+top.map((row,index)=>{
+   const amount=n(row[metric]),percent=amount>0?Math.max(2,Math.min(100,amount/max*100)):0;
+   const barClass=row.isOther?'other':index===0?'first':'';
+   return '<div class="md-rank-entry"><div class="md-rank-head"><span title="'+E(row.name)+'">'+E(row.name)+'</span>'+
+     '<strong title="'+E(won(row.amount))+' / '+row.count+'건">'+(metric==='count'?row.count.toLocaleString('ko-KR')+'건':dashWonShort(row.amount))+'</strong></div>'+
+     '<div class="md-rank-track"><i class="'+barClass+'" style="width:'+percent.toFixed(2)+'%"></i></div>'+
+     '<div class="md-rank-sub">'+won(row.amount)+' <span>· '+row.count.toLocaleString('ko-KR')+'건</span></div></div>';
+ }).join('')+'</div>':'<div class="empty">해당 기간에 확인된 지출이 없습니다.</div>';
+}
 function dashboard(){
  const all=relevant().filter(x=>period==='all'||x.date.slice(0,7)===period);
- const personal=all.filter(x=>x.scope==='personal'),business=all.filter(x=>x.scope==='business'),windmoon=all.filter(x=>x.scope==='windmoon'),review=all.filter(x=>x.scope==='review');
- const groupTotals=Object.entries(GROUP).map(([key,title])=>({title,total:sum(all.filter(x=>x.ledgerType===key))}));
- const categories=Object.entries(all.filter(x=>x.scope!=='review').reduce((a,x)=>{a[x.category]=(a[x.category]||0)+x.amount;return a},{})).sort((a,b)=>b[1]-a[1]).slice(0,9);
- const max=Math.max(1,...categories.map(x=>x[1]));
- const recent=all.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time)).slice(0,8);
- const top=pageIntro('MONEY OVERVIEW','매출과 지출을 한눈에','편의점 총매출 + 토토 확정 수수료를 수입으로 집계하고, 개인·편의점·풍월관 지출을 구분합니다.',topFilters());
- return top+
- '<div class="stat-grid">'+statCard('개인 소비',sum(personal),personal.length+'건 · 개인 장부','blue','◉')+
- statCard('편의점 매입 · 운영',sum(business),business.length+'건 · 편의점 장부','teal','▤')+
- statCard('풍월관 관련',sum(windmoon),windmoon.length+'건 · 별도 관리','violet','◈')+
- statCard('미분류 대기',sum(review),review.length+'건 · 판단 전 합계에서 분리','amber','?')+'</div>'+
- '<section class="surface sales-overview"><div class="surface-head"><div><h2>POS 월매출 요약</h2><p>편의점 매출·토토 월 확정 수수료는 직접 입력한 기록만 집계합니다.</p></div><button class="btn subtle" data-nav="sales">월매출 입력 →</button></div>'+
- '<div class="sales-overview-grid"><div><span>편의점 매출</span><strong>'+won(revenueTotal('store'))+'</strong></div>'+
- '<div><span>토토 월 확정 수수료</span><strong>'+won(revenueTotal('lotto'))+'</strong></div>'+
- '<div><span>매출 합계</span><strong>'+won(revenueTotal('store')+revenueTotal('lotto'))+'</strong></div></div></section>'+
- '<section class="surface finance-overview"><div class="surface-head"><div><h2>수입 − 지출 · 장부 수지</h2><p>총매출 기준, 토토는 확정 수수료만 적용합니다. 미분류 지출은 제외되어 잠정 수지일 수 있습니다.</p></div><button class="btn subtle" data-nav="sales">월매출 관리 →</button></div>'+
- '<div class="sales-overview-grid"><div><span>확정 수입</span><strong>'+won(financials(period).income)+'</strong></div>'+
- '<div><span>분류 완료 지출</span><strong>'+won(financials(period).expenses)+'</strong></div>'+
- '<div><span>장부 수지</span><strong>'+won(financials(period).balance)+'</strong></div></div></section>'+
- '<div class="dash-columns"><section class="surface"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>분류 완료한 거래 기준, 풍월관 금액은 별도 항목으로 표시</p></div></div>'+
- (categories.length?'<div class="category-chart">'+categories.map(([name,value])=>'<div class="chart-line"><div class="chart-meta"><span>'+E(name)+'</span><strong>'+won(value)+'</strong></div><div class="chart-bar"><i style="width:'+Math.max(2,value/max*100).toFixed(2)+'%"></i></div></div>').join('')+'</div>':'<div class="empty">금융내역을 가져오면 항목별 지출이 표시됩니다.</div>')+'</section>'+
- '<section class="surface summary-panel"><div class="surface-head"><div><h2>장부 구분</h2><p>고정지출 = 원본 시트 분류 · 고정비와 다름</p></div></div>'+
- groupTotals.map(x=>'<div class="summary-line"><span>'+x.title+'</span><strong>'+won(x.total)+'</strong></div>').join('')+
- '<div class="notice"><b>집계 원칙</b><p>풍월관 관련 지출은 편의점 사업비나 개인 소비에 합산하지 않습니다. 미분류도 확정 지출로 계산하지 않습니다.</p></div>'+
- '<button class="btn primary wide" data-nav="review">미분류 거래 검토하기 <span>→</span></button></section></div>'+
- '<section class="surface"><div class="surface-head"><div><h2>최근 거래</h2><p>거래처는 뱅크샐러드 원문을 우선 표시합니다. 원본 시트에만 있던 거래는 별도 표시합니다.</p></div><button class="btn subtle" data-nav="records">전체 거래 보기 →</button></div>'+transactionTable(recent,true)+'</section>';
+ const confirmed=all.filter(x=>x.status==='confirmed'&&x.scope!=='review'&&x.scope!=='excluded');
+ const pending=all.filter(x=>x.status==='review'||x.scope==='review');
+ const fin=financials(period);
+ const total=fin.expenses,personal=confirmed.filter(x=>x.scope==='personal');
+ const business=confirmed.filter(x=>x.scope==='business'),windmoon=confirmed.filter(x=>x.scope==='windmoon');
+ const other=confirmed.filter(x=>!['personal','business','windmoon'].includes(x.scope));
+ const storeIncome=revenueTotal('store',period),lottoIncome=revenueTotal('lotto',period);
+ const paymentMap=new Map(),categoryMap=new Map(),merchantMap=new Map();
+ const addGroup=(map,key,amount,label)=>{
+   const entry=map.get(key)||{name:label||key,amount:0,count:0};
+   entry.amount+=amount;entry.count++;map.set(key,entry);
+ };
+ for(const x of confirmed){
+   const amount=n(x.amount);
+   let payment=isOnnuri(x)?'온누리상품권':String(x.payment||'').trim();
+   if((!payment||/^(?:카드|체크카드|신용카드|계좌이체|자동이체)$/i.test(payment))&&x.bankPayment)
+     payment=String(x.bankPayment).trim();
+   payment=paymentLabelKey(payment);
+   if(!payment||isPaymentMonthMarker(payment))payment='결제수단 미기재';
+   addGroup(paymentMap,payment,amount);
+   addGroup(categoryMap,String(x.category||'미분류'),amount);
+   const merchantKey=G.normalizeMerchant(x.merchant||'')||'거래처미기재';
+   addGroup(merchantMap,merchantKey,amount,String(x.merchant||'거래처 미기재').trim()||'거래처 미기재');
+ }
+ const payments=[...paymentMap.values()],categories=[...categoryMap.values()],merchants=[...merchantMap.values()];
+ const onnuri=confirmed.filter(isOnnuri),onnuriAmount=sum(onnuri);
+ const fixedAmount=sum(confirmed.filter(x=>x.ledgerType==='fixed'));
+ const consumptionAmount=sum(confirmed.filter(x=>x.ledgerType==='consumption'));
+ const latest=all.slice().sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||''))).slice(0,8);
+ const scopes=[
+   {name:'개인',amount:sum(personal),count:personal.length,color:'#477fb4'},
+   {name:'편의점',amount:sum(business),count:business.length,color:'#138a74'},
+   {name:'풍월관',amount:sum(windmoon),count:windmoon.length,color:'#8972c7'},
+   {name:'기타',amount:sum(other),count:other.length,color:'#9caeb3'}
+ ];
+ let cursor=0;
+ const gradient=total>0?scopes.filter(x=>x.amount>0).map(row=>{
+   const start=cursor;cursor+=row.amount/total*100;
+   return row.color+' '+start.toFixed(3)+'% '+Math.min(100,cursor).toFixed(3)+'%';
+ }).join(','):'#e7eeeb 0% 100%';
+ const scopeChart='<div class="md-scope-chart"><div class="md-donut" role="img" aria-label="지출 사용처 구성비" style="background:conic-gradient('+gradient+')">'+
+   '<div class="md-donut-inner"><span>확정 지출</span><strong>'+dashWonShort(total)+'</strong></div></div>'+
+   '<div class="md-donut-legend">'+scopes.map(row=>'<div><i style="background:'+row.color+'"></i><span>'+E(row.name)+'</span><strong>'+dashWonShort(row.amount)+'</strong>'+
+     '<small>'+(!total?'0':(row.amount/total*100).toFixed(1))+'% · '+row.count+'건</small></div>').join('')+'</div></div>';
+ const trendSources=state.records.filter(x=>/^\d{4}-\d{2}/.test(String(x.date||''))&&x.status!=='excluded'&&
+   (x.direction==='expense'||x.direction==='income'&&['가게 매출','토토 수수료'].includes(x.category)));
+ const knownMonths=[...new Set([...trendSources.map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))])].sort();
+ const endMonth=period==='all'?(knownMonths.at(-1)||ym()):period;
+ const y=Number(endMonth.slice(0,4)),m=Number(endMonth.slice(5));
+ const trendMonths=Array.from({length:12},(_,i)=>{
+   const dt=new Date(Date.UTC(y,m-12+i,1));return dt.toISOString().slice(0,7);
+ });
+ const trendEntries=trendMonths.map(month=>{
+   const value=financials(month);return {month,income:value.income,expense:value.expenses,balance:value.balance};
+ });
+ const trendMax=Math.max(1,...trendEntries.flatMap(x=>[x.income,x.expense]));
+ const monthlyChart='<div class="md-trend-legend"><span><i class="income"></i>수입</span><span><i class="expense"></i>확정 지출</span><small>단위: 원 · 최근 12개월</small></div>'+
+   '<div class="md-trend-scroll"><div class="md-trend-grid">'+trendEntries.map(row=>{
+     const incomeH=row.income>0?Math.max(2,row.income/trendMax*100):0;
+     const expenseH=row.expense>0?Math.max(2,row.expense/trendMax*100):0;
+     const label=row.month.slice(2,4)+'/'+row.month.slice(5,7);
+     return '<div class="md-month-column" title="'+E(row.month)+' · 수입 '+E(won(row.income))+' / 지출 '+E(won(row.expense))+' / 차이 '+E(won(row.balance))+'">'+
+       '<div class="md-month-value">'+(row.income||row.expense?dashWonShort(Math.max(row.income,row.expense)):'')+'</div>'+
+       '<div class="md-month-pair"><i class="income" style="height:'+incomeH.toFixed(2)+'%"></i><i class="expense" style="height:'+expenseH.toFixed(2)+'%"></i></div>'+
+       '<span class="md-month-label">'+label+'</span><small class="'+(row.balance<0?'negative':'')+'">'+
+       (row.income||row.expense?dashWonShort(row.balance):'—')+'</small></div>';
+   }).join('')+'</div></div>'+
+   '<p class="md-chart-footnote">수입은 편의점 월 총매출 + 토토 확정 수수료, 지출은 분류 완료 건만 집계합니다. 아래 월별 차이는 순이익이 아닌 장부상 수지입니다.</p>';
+ const relevantMonths=[...new Set(state.records.filter(x=>x.direction==='income'&&x.status!=='excluded'&&x.category==='가게 매출').map(x=>x.date.slice(0,7)))].sort();
+ const posMonth=period==='all'?(relevantMonths.at(-1)||null):period;
+ const posGross=posMonth?revenueTotal('store',posMonth):0;
+ const posLotto=posMonth?revenueTotal('lotto',posMonth):0;
+ const profit=posMonth?storedProfit(posMonth):null;
+ const lottoDaily=posMonth?monthlyLottoDays(posMonth):[];
+ const pendingShare=all.length?pending.length/all.length*100:0;
+ const largest=confirmed.reduce((best,x)=>!best||n(x.amount)>n(best.amount)?x:best,null);
+ const paymentButtons='<div class="md-segment">'+
+   ['amount','count'].map(mode=>'<button type="button" data-dashboard-pay="'+mode+'" aria-pressed="'+(dashboardPayMetric===mode)+'" class="'+(dashboardPayMetric===mode?'active':'')+'">'+(mode==='amount'?'금액':'건수')+'</button>').join('')+'</div>';
+ const paymentRank=dashRankList(payments,8,dashboardPayMetric);
+ const head=pageIntro('MONEY CONTROL BOARD','가게부 상황판',
+   '수입·지출 흐름부터 결제수단, 사용처, 거래처까지 한눈에 파악합니다. 집계는 저장된 기록을 실시간 분석하며 원장을 변경하지 않습니다.',
+   '<div class="md-period-control"><label for="period-filter">조회 기간</label><select id="period-filter">'+monthlyOptions()+'</select></div>');
+ return head+
+ '<div class="md-status-strip"><span>확정 지출 <b>'+confirmed.length.toLocaleString('ko-KR')+'건</b></span>'+
+ '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+
+ '<span>기간 <b>'+(period==='all'?'전체 기간':E(period))+'</b></span>'+
+ '<button type="button" data-nav="review">미분류 검토 →</button></div>'+
+ '<div class="md-kpi-grid">'+statCard('확정 수입',fin.income,'편의점 '+dashWonShort(storeIncome)+' · 토토 '+dashWonShort(lottoIncome),'teal','↗')+
+ statCard('확정 지출',total,confirmed.length.toLocaleString('ko-KR')+'건 · 1건 평균 '+dashWonShort(confirmed.length?total/confirmed.length:0),'blue','↘')+
+ statCard('장부상 수지',fin.balance,'확정 수입 − 확정 지출 · 순이익 아님',fin.balance<0?'amber':'teal','≋')+
+ statCard('개인 지출',sum(personal),personal.length.toLocaleString('ko-KR')+'건','blue','◉')+
+ statCard('편의점 지출',sum(business),business.length.toLocaleString('ko-KR')+'건','teal','▤')+
+ statCard('풍월관 지출',sum(windmoon),windmoon.length.toLocaleString('ko-KR')+'건','violet','◈')+
+ statCard('온누리 사용액',onnuriAmount,onnuri.length.toLocaleString('ko-KR')+'건 · 충전액 제외','teal','₩')+
+ statCard('미분류 대기액',sum(pending),pending.length.toLocaleString('ko-KR')+'건 · 확정 수지 제외','amber','?')+'</div>'+
+ '<div class="md-dashboard-grid"><section class="surface md-panel md-span-2"><div class="surface-head"><div><h2>월별 수입 · 지출 흐름</h2><p>'+
+   (period==='all'?'전체 합계와 별개로 최근 12개월을 표시합니다.':'선택월까지의 12개월을 표시합니다.')+
+   '</p></div><button type="button" class="btn subtle" data-nav="sales">월매출 관리</button></div>'+monthlyChart+'</section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>사용처별 지출 비중</h2><p>개인 · 편의점 · 풍월관은 서로 합산하지 않습니다.</p></div></div>'+
+   scopeChart+'</section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>결제수단별 실제 사용</h2><p>온누리는 사용액만 계산하며, 동일 카드의 다른 표기는 합산합니다.</p></div>'+paymentButtons+'</div>'+
+   paymentRank+'<div class="md-panel-footer">선택 기간 '+payments.length+'종 · 총 '+won(total)+' · '+confirmed.length+'건</div></section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>대분류별 지출 금액 · 건수</p></div></div>'+dashRankList(categories,9)+
+ '<div class="md-panel-footer">고정지출 '+dashWonShort(fixedAmount)+' · 소비지출 '+dashWonShort(consumptionAmount)+'</div></section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>많이 결제한 거래처</h2><p>같은 이름의 거래처를 합산한 상위 8곳</p></div></div>'+dashRankList(merchants,8)+'</section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>매출 · 입력 점검</h2><p>'+(posMonth?E(posMonth)+' 기준':'등록된 월매출이 없습니다.')+'</p></div>'+
+ '<button type="button" class="btn subtle" data-nav="sales">매출 입력</button></div>'+
+ '<div class="md-check-list"><div><span>편의점 월 총매출</span><strong>'+won(posGross)+'</strong></div>'+
+ '<div><span>토토 월 확정 수수료</span><strong>'+won(posLotto)+'</strong></div>'+
+ '<div><span>편의점 월 순이익 (참고)</span><strong>'+(profit===null?'미입력':won(profit))+'</strong></div>'+
+ '<div><span>토토 일별 기록</span><strong>'+lottoDaily.length+'일</strong></div>'+
+ '<div><span>확정 지출 평균</span><strong>'+dashWonShort(confirmed.length?total/confirmed.length:0)+'</strong></div>'+
+ '<div><span>최대 단일 지출</span><strong>'+(largest?dashWonShort(largest.amount):'—')+'</strong></div></div>'+
+ (largest?'<p class="md-check-detail">최대 지출: '+E(largest.merchant||'거래처 미기재')+' · '+E(largest.date)+'</p>':'')+
+ '<button type="button" class="md-review-link" data-nav="review">미분류 '+pending.length+'건 바로 확인 →</button></section></div>'+
+ '<section class="surface md-panel md-recent"><div class="surface-head"><div><h2>최근 거래</h2><p>선택한 기간 내 최근 8건 · 미분류 포함</p></div><button type="button" class="btn subtle" data-nav="records">전체 거래 보기</button></div>'+transactionTable(latest,true)+'</section>'+
+ '<div class="md-disclosure">장부 지표는 입력 자료 기준이며 실제 은행 잔액·세후 순이익을 뜻하지 않습니다. 은행 간 이체·카드대금·온누리 충전액은 지출에 중복 계산하지 않으며 미분류 거래는 별도 표시합니다.</div>';
 }
 function transactionTable(items,compact=false){
  return '<div class="table-scroll"><table class="records-table"><thead><tr><th>날짜 · 시간</th><th>거래처</th><th>결제 수단</th><th>분류</th><th class="right">금액</th><th>관리</th></tr></thead><tbody>'+
@@ -1548,6 +1662,10 @@ function onClick(event){
  if(target.dataset.deleteRecord){const id=target.dataset.deleteRecord;if(deleteRecordById(id)&&$('#editor')?.open)$('#editor').close();return}
  if(target.dataset.deleteLotto){deleteDailyLotto(target.dataset.deleteLotto);return}
  if(target.id==='reset-all-v2'){resetAllV2();return}
+ if(target.dataset.dashboardPay){
+   dashboardPayMetric=target.dataset.dashboardPay==='count'?'count':'amount';
+   render();return;
+ }
  if(target.id==='restore-bank-presets'){restoreBankSaladPresets();return}
  if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
    readSheetCells();const count=target.id==='sheet-add-5'?5:20;
