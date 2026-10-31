@@ -1117,6 +1117,39 @@ const validateBankRange=range=>{
  throw Error('시작일은 종료일보다 늦을 수 없습니다.');
  return {...range};
 };
+/* Detect the recurring two-charge U+ pattern from the user's private ledger.
+   Both internet and mobile use the same public merchant name; requiring several
+   paired months prevents a new plan charge being assigned by amount alone. */
+function classifyPairedLGUPlus(row){
+ if(row.type!=='지출'||Number(row.amount)>=0||!/(?:LG\s*U\+|LGU\+|LG유플러스|엘지유플러스)/i.test(String(row.merchant||'')))return null;
+ const key=G.normalizeMerchant(row.merchant),charges={business:[],personal:[]};
+ for(const x of state.records){
+   if(x.direction!=='expense'||x.status!=='confirmed'||G.normalizeMerchant(x.merchant||'')!==key)continue;
+   if(x.ledgerType!=='fixed')continue;
+   if(x.scope==='business'&&x.category==='가게'&&x.subcategory==='인터넷')charges.business.push(x);
+   if(x.scope==='personal'&&x.category==='집'&&x.subcategory==='통신료')charges.personal.push(x);
+ }
+ const months={business:new Set(charges.business.map(x=>x.date.slice(0,7))),personal:new Set(charges.personal.map(x=>x.date.slice(0,7)))};
+ const paired=[...months.business].filter(month=>months.personal.has(month));
+ if(paired.length<3||months.business.size<3||months.personal.size<3)return null;
+ const median=values=>{
+   const a=values.slice().sort((x,y)=>x-y),mid=Math.floor(a.length/2);
+   return a.length%2?a[mid]:(a[mid-1]+a[mid])/2;
+ };
+ const business=median(charges.business.map(x=>Number(x.amount))),personal=median(charges.personal.map(x=>Number(x.amount)));
+ if(!(business>0&&personal>0))return null;
+ // Rates need to be distinct; never infer when two plans overlap.
+ if(Math.abs(business-personal)/Math.min(business,personal)<0.2)return null;
+ const amount=money(row.amount);
+ const distance={business:Math.abs(amount-business)/business,personal:Math.abs(amount-personal)/personal};
+ const candidates=Object.keys(distance).filter(scope=>distance[scope]<=0.14);
+ if(candidates.length!==1)return null;
+ const scope=candidates[0],shop=scope==='business';
+ return {action:'keep',scope,status:'confirmed',ledgerType:'fixed',
+   category:shop?'가게':'집',subcategory:shop?'인터넷':'통신료',
+   reason:'과거 확정 원장의 월별 LG U+ 이중 청구 패턴 ('+paired.length+'개월) 및 요금대 일치',
+   confidence:0.95};
+}
 async function processBank(file,range=bankImportRange){
  const bounds=validateBankRange(range);
  const parsed=await window.BankSaladXLSX.parseBankSalad(file);
@@ -1138,6 +1171,10 @@ async function processBank(file,range=bankImportRange){
    if(row.date<bounds.from||row.date>bounds.to){outOfRange++;continue}
    if(existing.has(key)){count('이미 가져온 거래');continue}
    let cls=G.classify(row,state.customRules);
+   if(cls.action==='keep'&&cls.status==='review'&&/LG U\+ 가게 인터넷·개인 휴대폰/.test(cls.reason||'')){
+     const paired=classifyPairedLGUPlus(row);
+     if(paired)cls=paired;
+   }
    const savedRent=state.rentRecipients?.[G.normalizeMerchant(row.merchant)];
    if(row.type==='이체'&&row.amount<0&&savedRent&&savedRent.amount===money(row.amount)){
      cls={action:'keep',scope:savedRent.scope,status:'confirmed',ledgerType:'fixed',
