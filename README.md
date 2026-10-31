@@ -1,35 +1,54 @@
 # 편의점 가게부 (Store Ledger)
 
-편의점 매입·매출과 개인 소비를 함께 기록하고 구분해 분석하는 독립 웹 가게부입니다.
-풍월관 / WIND MOON 웹사이트와는 무관합니다.
+본 저장소는 사용자가 운영하는 편의점의 장부용이며 **WIND MOON / 풍월관 관리프로그램과 무관**합니다.
 
-## 주요 기능
-- 월별 수입·지출 및 사업비 / 개인 소비 구분
-- 거래 등록, 검색, 수정, 삭제, CSV 내보내기
-- 대분류 선택 시 관련 소분류 선택 (없는 항목은 직접 입력)
-- 토토 일별 수수료와 월별 확정 수입 분리
-- 반복 지출, JSON 백업·복원
-- 기존 대납 분류를 일반 개인 지출로 변환
+공개 사이트: https://heysyu84.github.io/store-ledger/
 
-## 개인정보 주의
-이 **공개 저장소에는 웹페이지 코드만** 올립니다.
-원본 구글 시트, 카드 내역, 가계부 이관 JSON 및 실거래 내역은 포함하지 않습니다.
+## 시트형 입력
 
-브라우저의 `localStorage`에만 데이터를 저장합니다.
-기기 간 자동 동기화, 사용자 인증, 서버 저장 기능은 없습니다.
-공용 기기에서 사용하지 말고 정기적으로 JSON 파일로 백업하세요.
+- **시트형 일괄 입력**: 20행부터 시작하여 10행씩 추가, 같은 날짜 여러 건, 열에 상관없이 순서대로 또는 원하는 순서대로 입력, 전체 일괄 저장
+- 키보드 `Enter`(같은 열 아래), `Shift+Enter`(위), `Tab`(옆), 방향키 이동, 복수 셀 TSV 붙여넣기
+- **토토 매출상세**: 월 선택 시 28~31개 날짜 자동 준비, 일별 수수료와 판매액을 원하는 순서로 입력, 한 번에 저장. 동일 날짜는 갱신, 미입력 날짜는 보존
+- **월말 가게 매출**: 해당 월 마지막 날 날짜 자동 지정, 한 달 한 건 저장, 중복 등록 대신 기존 기록 수정 확인
+- 기존 단건 입력과 소분류 자동 후보, 장부 분석, JSON 내보내기·가져오기 계속 지원
 
-## 최초 이용
-1. GitHub Pages에서 사이트를 엽니다.
-2. `데이터 관리 → JSON 파일 불러오기`에서 개인용 이관 파일을 불러옵니다.
-3. 브라우저별로 데이터가 분리 저장되므로 다른 기기에서는 별도 복원합니다.
+## 서버 구조
 
-## 배포 설정
-GitHub 저장소 Settings → Pages → Build and deployment → **Deploy from a branch**
-→ Branch: `main`, Folder: `/ (root)` → Save
+GitHub Pages에는 **화면 코드만** 보관합니다. 서버는 별도 Cloudflare Worker + D1이 저장을 담당하며 관리자 인증과 버전 충돌 방지 기능을 제공합니다.
 
-게시 주소: https://heysyu84.github.io/store-ledger/
+**현재 공개 사이트는 Cloudflare 서버 배포 전에도 브라우저 localStorage 모드로 동작합니다.** 서버 미배포 상태에서는 여러 기기가 자동으로 동기화되지 않습니다.
 
-## 2026-10-31 최신 시트 갱신
+### Cloudflare 최초 설정 (계정 소유자의 1회 설정 필요)
 
-`데이터 관리`에서 최신 구글 시트 이관 JSON을 **최신 시트 갱신** 모드로 가져오면 원본 시트 거래를 갱신하고 사이트에 직접 입력한 거래는 보존합니다. 기존 시트 거래를 사이트에서 수동 편집했다면 먼저 전체 JSON을 백업하세요. 공개 GitHub 저장소에는 실거래 기록이나 메모가 올라가지 않습니다. 같은 상호의 앞으로의 구매는 자동으로 재분류하지 않습니다.
+Cloudflare 계정이 로그인된 명령줄에서 저장소를 복제한 뒤 다음 명령을 실행합니다.
+
+```bash
+npx wrangler login
+npx wrangler d1 create store-ledger-private --location apac
+```
+
+반환되는 데이터베이스 ID를 `wrangler.toml.example`의 `REPLACE_WITH_YOUR_D1_DATABASE_ID` 자리에 기입하고 해당 파일을 `wrangler.toml`로 복사합니다.
+
+```bash
+npx wrangler d1 execute store-ledger-private --remote --file=db/schema.sql
+npx wrangler secret put ADMIN_PASSWORD
+npx wrangler secret put SESSION_PEPPER
+npx wrangler deploy
+```
+
+`ADMIN_PASSWORD`는 **길고 고유한 관리자 비밀번호**, `SESSION_PEPPER`는 **별도의 랜덤 문자열**을 입력합니다. 둘 다 GitHub, 브라우저 코드, JSON 파일에 적지 마세요. `wrangler.toml`의 `ALLOWED_ORIGINS`는 접속 사이트가 바뀌는 경우에만 수정하세요.
+
+Worker가 게시되면 가게부의 `데이터 관리 → 서버 저장`에 `https://....workers.dev` 주소와 관리자 비밀번호를 입력해 로그인합니다. 처음에는 **JSON 백업을 먼저 보관한 후** 기존 장부를 한 번만 서버에 올립니다. 다른 기기에서도 같은 Worker 주소로 로그인하면 서버 기록을 불러옵니다.
+
+### 데이터 보존 안전장치
+
+- Workers API 사용자는 관리자 비밀번호와 12시간 세션 토큰으로 인증합니다. 세션 토큰은 데이터베이스에 해시로 저장되고 브라우저 탭 `sessionStorage`에만 보관됩니다.
+- 서버는 저장 시 버전 번호(CAS)를 검사하고, 다른 기기에서 먼저 변경한 경우 409로 거부하여 **덮어쓰기 충돌을 방지**합니다.
+- 이전 내용은 최신 30회까지 `ledger_history` 테이블에 보관합니다.
+- 서버 연결이 실패하면 브라우저에 장부 사본을 남기고 경고합니다. 복구/차이 비교 전에 자동으로 원격 장부를 덮어쓰지 않습니다.
+- `Google Sheets → D1` 자동 동기화는 아직 구현하지 않았습니다. 구글 시트는 연결된 ChatGPT에서 읽어 이관 JSON으로 생성할 수 있지만, 서버에 넣으려면 본인 인증된 사이트 세션이 필요합니다.
+- 데이터 백업 및 비공개 서버 데이터는 공개 저장소에 올리지 않습니다.
+
+## 공개 저장소에 업로드 금지
+
+2026년 실제 개인 수입·지출·카드 사용 내역, 이관 데이터 JSON/HTML, D1 백업, Worker 관리자 비밀번호, Cloudflare API 토큰, `wrangler.toml`, `.dev.vars` / `.env` / 기타 비밀 값.
