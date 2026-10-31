@@ -736,8 +736,13 @@ function pasteSheetGrid(e){
    if(f==='scope'&&!(v in LABEL))continue;
    if(f==='ledgerType'&&!(v in GROUP))continue;
    if(f==='category'&&!Object.keys(categoriesFor(entry.ledgerType)).includes(v))continue;
+   if(f==='onnuri'){
+     entry.onnuri=/^(?:1|true|yes|y|예|o|온누리|체크)$/i.test(String(v).trim());
+     entry.onnuriTouched=true;entry.onnuriAuto=false;continue;
+   }
    entry[f]=v;
  }
+ for(let i=0;i<rows.length;i++)syncSheetOnnuri(sheetData.rows[startIndex+i]);
  rerenderSheet(startIndex,el.dataset.sheetField);
 }
 function sheetMove(e){
@@ -772,7 +777,7 @@ function sheetMove(e){
  e.preventDefault();
  e.stopPropagation();
  const current=sheetData.rows[index];
- if(current)current[el.dataset.sheetField]=el.value; // do not discard last edited cell
+ if(current)current[el.dataset.sheetField]=el.dataset.sheetField==='onnuri'?el.checked:el.value; // do not discard last edited cell
  if(row>=sheetData.limit){toast('한 번에 최대 '+sheetData.limit+'행까지 입력할 수 있습니다.');return true}
  while(row>=sheetData.rows.length){
    const newRow=sheetNewRow();
@@ -781,7 +786,7 @@ function sheetMove(e){
    if(body)body.insertAdjacentHTML('beforeend',sheetRowMarkup(newRow,sheetData.rows.length-1));
  }
  const next=$('[data-sheet-index="'+row+'"][data-sheet-field="'+SHEET_FIELDS[col]+'"]');
- if(next){next.focus({preventScroll:false});if(next.tagName==='INPUT'&&next.type!=='date')next.select?.()}
+ if(next){next.focus({preventScroll:false});if(next.tagName==='INPUT'&&!['date','checkbox'].includes(next.type))next.select?.()}
  return true;
 }
 function sheetSelectChange(el){
@@ -1464,6 +1469,10 @@ function onChange(e){
  }return}
  if(el.dataset.sheetField){
    const row=sheetData.rows[Number(el.dataset.sheetIndex)];
+   if(el.dataset.sheetField==='onnuri'){
+     if(row){row.onnuri=!!el.checked;row.onnuriTouched=true;row.onnuriAuto=false}
+     return;
+   }
    if(el.dataset.sheetField==='category'&&el.value==='__add__'){
      const type=el.closest('tr')?.querySelector('[data-sheet-field="ledgerType"]')?.value||'consumption';
      const name=prompt('추가할 대분류 이름을 입력하세요.','');
@@ -1476,7 +1485,11 @@ function onChange(e){
        toast('대분류 "'+name.trim()+'"을 추가했습니다.');
      }catch(err){el.value=row?.category||'';toast(err.message);return}
    }
-   if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}
+   if(row){
+     row[el.dataset.sheetField]=el.value;
+     if(el.dataset.sheetField==='scope')row.scopeManual=true;
+     if(['merchant','payment'].includes(el.dataset.sheetField))syncSheetOnnuri(row,el.closest('tr'));
+   }
    sheetSelectChange(el);
    if(row&&row.scope==='windmoon'&&['scope','category'].includes(el.dataset.sheetField))row.subcategory='풍월관';
    return;
@@ -1516,7 +1529,13 @@ function init(){
  document.addEventListener('input',e=>{
    if(['edit-merchant','edit-payment'].includes(e.target.id))syncEditorOnnuriDefault();
    if(e.target.id==='query-filter')onChange(e);
-   if(e.target.dataset?.sheetField){const row=sheetData.rows[Number(e.target.dataset.sheetIndex)];if(row)row[e.target.dataset.sheetField]=e.target.value;}
+   if(e.target.dataset?.sheetField){
+     const row=sheetData.rows[Number(e.target.dataset.sheetIndex)];
+     if(row&&e.target.dataset.sheetField!=='onnuri'){
+       row[e.target.dataset.sheetField]=e.target.value;
+       if(['merchant','payment'].includes(e.target.dataset.sheetField))syncSheetOnnuri(row,e.target.closest('tr'));
+     }
+   }
    const form=e.target.closest?.('.sales-form[data-sale-type="store"]');
    if(form&&['amount','netProfit'].includes(e.target.name)){
      const gross=numInput(form.querySelector('[name="amount"]').value);
