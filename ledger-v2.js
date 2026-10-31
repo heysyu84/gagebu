@@ -30,9 +30,9 @@ function migrateLegacy(data){
   direction:x.kind==='income'?'income':x.kind==='transfer'?'transfer':'expense',
   scope:ledgerScope(x),ledgerType:x.sourceSheet==='고정지출'?'fixed':x.sourceSheet==='소비지출'?'consumption':'',
   category:String(x.category||''),subcategory:String(x.subcategory||''),
-  merchant:'',payment:String(x.payment||''),note:String(x.note||''),
+  merchant:String(x.merchant||''),payment:String(x.payment||''),note:String(x.note||''),
   source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),
-  originalArea:String(x.area||''),status:'confirmed',manual:false,bankKey:''
+  originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
  return entries.filter(x=>x.date.startsWith('2026-'));
 }
@@ -220,7 +220,7 @@ function bankKey(raw){
  return (h1>>>0).toString(36)+'-'+(h2>>>0).toString(36);
 }
 function matchOld(row,candidates,used){
- const eligible=candidates.filter(x=>!used.has(x.id)&&!x.bankKey&&x.amount===money(row.amount)&&dateDiff(x.date,row.date)<=1);
+ const eligible=candidates.filter(x=>!used.has(x.id)&&!x.bankKey&&x.amount===money(row.amount)&&dateDiff(x.date,row.date)<=1&&!(x.category==='발주'&&x.subcategory==='주류'));
  const exact=eligible.filter(x=>x.date===row.date);
  let pool=exact.length?exact:eligible;
  if(pool.length===1)return {record:pool[0],confidence:exact.length?1:0.6};
@@ -317,9 +317,26 @@ async function importLegacy(file){
  const existing=new Set(state.records.map(x=>x.id));
  const additions=rows.filter(x=>!existing.has(x.id));
  if(!additions.length){toast('이미 등록된 원장 기록입니다.');return}
- if(!confirm('기존 구글 시트 기록 '+additions.length+'건을 보존하면서 합칠까요?'))return;
- state.records.push(...additions);state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,source:'legacy'});
- if(save()){render();toast('원본 기록 '+additions.length+'건을 추가했습니다.')}
+ if(!confirm('기존 구글 시트 기록 '+additions.length+'건을 보존하면서 합칠까요? 이미 가져온 은행 결제와 대조합니다.'))return;
+ const linkedBankIds=new Set();
+ for(const original of additions){
+   if(original.direction!=='expense'||(original.category==='발주'&&original.subcategory==='주류'))continue;
+   const matching=state.records.filter(b=>b.source==='bank'&&b.direction==='expense'&&!linkedBankIds.has(b.id)&&
+     b.amount===original.amount&&b.date===original.date&&b.status!=='excluded');
+   if(matching.length!==1)continue;
+   const match=matching[0];linkedBankIds.add(match.id);
+   original.bankKey=match.bankKey;
+   if(!original.merchant)original.merchant=match.merchant;
+   original.bankPayment=match.payment;
+   if(match.scope!=='review'&&original.scope!==match.scope){
+     original.status='review';original.scope='review';
+     original.reason='원본 시트와 뱅크샐러드의 분류가 달라 확인 필요';
+   }
+ }
+ if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
+ state.records.push(...additions);
+ state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,linked:linkedBankIds.size,source:'legacy'});
+ if(save()){render();toast('원본 '+additions.length+'건 등록, 은행 중복 '+linkedBankIds.size+'건 연결 완료')}
 }
 function download(name,contents,type){
  const url=URL.createObjectURL(new Blob([contents],{type}));
