@@ -1591,13 +1591,21 @@ function planSafeLedgerMerge(current,incoming){
  // deliberately removed from an active ledger. Only a pristine restore copies them.
  const rules={...(base.customRules||{})},rent={...(base.rentRecipients||{})};
  const audit=Array.isArray(base.excludedAudit)?[...base.excludedAudit]:[];
- const next={...base,version:2,records:[...currentRows,...additions],
+ const existingRefunds=Array.isArray(current.refunds)?current.refunds:[];
+ const refundKeys=new Set(existingRefunds.map(x=>x.bankKey||x.id));
+ const recordKeys=new Set([...currentRows,...additions].map(x=>x.id));
+ const refundAdd=(Array.isArray(incoming.refunds)?incoming.refunds:[]).filter(x=>{
+   if(!x||!x.bankKey||refundKeys.has(x.bankKey)||!Number.isSafeInteger(Number(x.amount))||Number(x.amount)<=0)return false;
+   if(x.status==='matched'&&(!x.refundOf||!recordKeys.has(x.refundOf)))return false;
+   refundKeys.add(x.bankKey);return true;
+ });
+ const next={...base,version:2,records:[...currentRows,...additions],refunds:[...existingRefunds,...refundAdd],
    dailyLotto:[...(current.dailyLotto||[]),...dailyAdd],
    storeProfits:{...(current.storeProfits||{}),...profitAdd},
    customRules:rules,rentRecipients:rent,excludedAudit:audit};
  const currentLast=currentRows.reduce((v,x)=>x.date>v?x.date:v,'');
  const incomingLast=incoming.records.reduce((v,x)=>x?.date>v?x.date:v,'');
- return {next,added:additions.length,duplicates,conflicts,invalid,
+ return {next,added:additions.length,refundsAdded:refundAdd.length,duplicates,conflicts,invalid,
    dailyAdded:dailyAdd.length,profitsAdded:Object.keys(profitAdd).length,
    oldFile:!!(currentLast&&incomingLast&&incomingLast<currentLast),
    currentLast,incomingLast};
@@ -1660,11 +1668,11 @@ async function importLegacy(file){
  let plan;
  try{plan=planSafeLedgerMerge(state,incoming)}
  catch(err){toast(err.message);return}
- const count=plan.added+plan.dailyAdded+plan.profitsAdded;
+ const count=plan.added+plan.dailyAdded+plan.profitsAdded+plan.refundsAdded;
  if(!count){toast('이미 등록된 자료입니다. 기존 거래 '+plan.duplicates+'건을 유지하며 아무것도 변경하지 않았습니다.');return}
  const warning=plan.oldFile?'\n⚠ 이 파일의 최근 거래일('+plan.incomingLast+')이 현재 장부('+plan.currentLast+')보다 오래되었습니다. 기존 기록은 삭제되지 않습니다.':'';
  const message='안전 병합으로 등록합니다.\n\n새 거래 '+plan.added+'건 / 토토 일별 '+plan.dailyAdded+
-   '일 / 월 순이익 '+plan.profitsAdded+'개월 추가\n중복 '+plan.duplicates+'건 건너뜀'+
+   '일 / 월 순이익 '+plan.profitsAdded+'개월 / 환불 '+plan.refundsAdded+'건 추가\n중복 '+plan.duplicates+'건 건너뜀'+
    (plan.conflicts?'\n다르게 수정된 기존 거래 '+plan.conflicts+'건: 현재 값 유지':'')+
    (plan.invalid?'\n파일 내 형식 오류 '+plan.invalid+'건: 추가하지 않음':'')+
    warning+'\n\n현재 등록된 거래·수정 내용·온누리 체크는 덮어쓰거나 삭제하지 않습니다.'+
@@ -1678,11 +1686,11 @@ async function importLegacy(file){
  const previous=state;
  plan.next.imports=[...(state.imports||[]),{at:new Date().toISOString(),
    name:file.name,source:'safe-merge',added:plan.added,duplicates:plan.duplicates,
-   conflicts:plan.conflicts,dailyAdded:plan.dailyAdded,profitsAdded:plan.profitsAdded}];
+   conflicts:plan.conflicts,dailyAdded:plan.dailyAdded,profitsAdded:plan.profitsAdded,refundsAdded:plan.refundsAdded}];
  state=plan.next;
  if(!save()){state=previous;return}
  preview=null;render();
- toast('안전 병합 완료: 거래 '+plan.added+'건 추가 · 기존 거래 '+plan.duplicates+'건 유지');
+ toast('안전 병합 완료: 거래 '+plan.added+'건 · 환불 '+plan.refundsAdded+'건 추가 · 기존 거래 '+plan.duplicates+'건 유지');
 }
 function download(name,contents,type){
  const url=URL.createObjectURL(new Blob([contents],{type}));
