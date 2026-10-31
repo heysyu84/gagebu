@@ -19,7 +19,7 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -138,6 +138,7 @@ function load(){
  // Also initialise a fresh browser before the user hides or renames categories,
  // otherwise the next reload could mistakenly restore a deliberately hidden item.
  if(state.bankSaladBaselineVersion!==2){adoptBankSaladDefaults();save()}
+ if(state.fixedPurchasePresetVersion!==1){trimUnusedPurchasePresets();save()}
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
@@ -233,7 +234,7 @@ function reviewPage(){
 const SHEET_CATS={
  fixed:{
   '담배 발주':['KT&G','말보로','메비우스','던힐'],
-  '발주':['쿠팡','지마켓','알리','11번가','네이버','옥션','SSG','롯데온','컬리','테무','오늘의집','무신사','인터파크','위메프','티몬','아이허브','29CM','온라인','상온','주류','미스터파크','기타'],
+  '발주':['쿠팡','상온','지마켓','주류','네이버','미스터파크','기타'],
   '가게':['임대료','전기료','통신료','보안업체','가맹비','점소모품','스포츠 토토','기타'],
   '집':['월세','전기료','통신료','수도세','가스요금'],
   '보험':['KB암보험','KB주가지수','메리츠','삼성화재','KB7년의약속','기타'],
@@ -364,6 +365,33 @@ function restoreBankSaladPresets(confirmAction=true){
  state.bankSaladBaselineVersion=2;
  if(!save()){state=JSON.parse(prior);return false}
  render();toast('뱅크샐러드 기본 소비 분류·결제수단을 복원했습니다.');
+ return true;
+}
+
+/* Verified from the user's 2026 Google Sheet '고정지출':
+   fixed / 발주 has only 7 actually used subcategories through October 31.
+   The previous template accidentally populated 15 unrequested vendors.
+   Remove only those specific defaults from existing browsers, without changing
+   recorded transactions, user-added names, or other categories. */
+const UNUSED_FIXED_PURCHASE_PRESETS=[
+ '알리','11번가','옥션','SSG','롯데온','컬리','테무','오늘의집','무신사',
+ '인터파크','위메프','티몬','아이허브','29CM','온라인'
+];
+function trimUnusedPurchasePresets(){
+ if(state.fixedPurchasePresetVersion===1)return false;
+ const tax=taxonomy(),major=canonicalCategory('fixed','발주','').category||'발주';
+ const subs=tax.fixed?.[major];
+ if(Array.isArray(subs)){
+   const inUse=new Set(
+     [...state.records,...sheetData.rows].filter(x=>
+       x.direction==='expense'&&x.ledgerType==='fixed'&&x.category===major
+     ).map(x=>x.subcategory)
+   );
+   // Keep entries if actually used within local V2 records. This avoids
+   // discarding a newly used vendor not yet present in the source Sheet.
+   tax.fixed[major]=subs.filter(x=>!UNUSED_FIXED_PURCHASE_PRESETS.includes(x)||inUse.has(x));
+ }
+ state.fixedPurchasePresetVersion=1;
  return true;
 }
 
