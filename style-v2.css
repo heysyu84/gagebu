@@ -137,6 +137,9 @@
 .tax-line>code,.tax-line>b,.tax-line>span{font-size:11px;color:#719286;white-space:nowrap;min-width:66px}
 .tax-line>.btn{flex:none;min-height:34px;padding:7px 10px;font-size:11px}
 .tax-line>.danger-outline{padding:7px 8px;font-size:10px}
+.payment-group-heading{font-size:12px;font-weight:800;letter-spacing:.02em;color:var(--ink);margin:22px 0 7px;padding-bottom:8px;border-bottom:1px solid #dce8e2}
+.payment-group-heading:first-child{margin-top:12px}
+.tax-line .payment-use-count{font-size:11px;font-variant-numeric:tabular-nums;color:#3e806c;white-space:nowrap;min-width:45px;text-align:right;font-weight:750}
 .tax-add{margin-top:12px;padding-top:16px;border-top:1px solid #e8f0ec}.tax-add input{background:#f8fbf9;border-style:dashed}
 .tax-major{border:1px solid #e2ede7;border-radius:12px;margin:10px 0 15px;background:#fcfefd;padding:8px 12px 10px}
 .tax-major>.tax-line{padding-top:7px}
