@@ -8,7 +8,7 @@
   <meta name="referrer" content="no-referrer">
   <title>가게부 | Money Desk</title>
   <meta name="description" content="개인 · 편의점 · 풍월관 지출을 구분하는 로컬 가계부.">
-  <link rel="stylesheet" href="./style-v2.css?v=20261101-windmoon-delete-v8">
+  <link rel="stylesheet" href="./style-v2.css?v=20261101-taxonomy-v9">
 </head>
 <body>
 <div class="shell">
@@ -29,6 +29,7 @@
     </nav>
     <div class="sidebar-section nav-gap">SETTINGS</div>
     <nav class="nav-stack">
+      <button class="nav-link" data-nav="categories"><span class="nav-icon">▤</span> 분류 관리</button>
       <button class="nav-link" data-nav="rules"><span class="nav-icon">◇</span> 자동 분류 기준</button>
       <button class="nav-link" data-nav="settings"><span class="nav-icon">⚙</span> 데이터 · 설정</button>
     </nav>
@@ -51,9 +52,9 @@
       <div class="field full"><label for="edit-merchant">거래처 / 받는 곳</label><input id="edit-merchant" name="merchant" type="text" placeholder="원본 거래처명 입력" required></div>
       <div class="field"><label for="edit-scope">사용처</label><select id="edit-scope" name="scope"><option value="personal">개인</option><option value="business">편의점</option><option value="windmoon">풍월관</option></select></div>
       <div class="field"><label for="edit-group">지출 종류</label><select id="edit-group" name="ledgerType"><option value="consumption">소비지출</option><option value="fixed">고정지출</option></select></div>
-      <div class="field"><label for="edit-category">대분류</label><input id="edit-category" name="category" placeholder="예: 발주, 쇼핑, 풍월관"></div>
-      <div class="field"><label for="edit-subcategory">소분류</label><input id="edit-subcategory" name="subcategory" placeholder="예: 쿠팡, 식비"></div>
-      <div class="field full"><label for="edit-payment">뱅샐 등록 카드 / 원본 결제수단</label><input id="edit-payment" name="payment" placeholder="카드 또는 계좌명"></div>
+      <div class="field"><label for="edit-category">대분류</label><input id="edit-category" name="category" list="editor-major-options" autocomplete="off" placeholder="대분류 선택·검색·새 이름 입력"><datalist id="editor-major-options"></datalist></div>
+      <div class="field"><label for="edit-subcategory">소분류</label><input id="edit-subcategory" name="subcategory" list="editor-minor-options" autocomplete="off" placeholder="소분류 선택·검색·새 이름 입력"><datalist id="editor-minor-options"></datalist></div>
+      <div class="field full"><label for="edit-payment">뱅샐 등록 카드 / 원본 결제수단</label><input id="edit-payment" name="payment" list="editor-payment-options" autocomplete="off" placeholder="결제수단 선택 또는 입력"><datalist id="editor-payment-options"></datalist></div>
       <div class="field full"><label class="onnuri-choice editor-onnuri"><input type="checkbox" id="edit-onnuri" name="onnuri" value="1"> <span>카드로 표시됐지만 실제로는 온누리상품권 잔액으로 결제</span></label><small id="editor-registered-card" class="editor-card-hint"></small></div>
       <div class="field full"><label for="edit-note">메모</label><textarea id="edit-note" name="note" placeholder="선택 · 결제 목적 등을 기록"></textarea></div>
     </div>
@@ -62,8 +63,8 @@
 </dialog>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="./vendor/jszip.min.js" defer></script>
-<script src="./bank-xlsx-v2.js?v=20261101-windmoon-delete-v8" defer></script>
-<script src="./ledger-rules-v2.js?v=20261101-windmoon-delete-v8" defer></script>
-<script src="./ledger-v2.js?v=20261101-windmoon-delete-v8" defer></script>
+<script src="./bank-xlsx-v2.js?v=20261101-taxonomy-v9" defer></script>
+<script src="./ledger-rules-v2.js?v=20261101-taxonomy-v9" defer></script>
+<script src="./ledger-v2.js?v=20261101-taxonomy-v9" defer></script>
 </body>
 </html>

@@ -7,7 +7,7 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원',ym=()=>new Date().toISOString().slice(0,7);
 const now=()=>new Date().toISOString().slice(0,10),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'시트형 입력',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'시트형 입력',categories:'분류 관리',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
@@ -19,7 +19,7 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -59,7 +59,7 @@ function migrateLegacy(data){
   source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),sourceRow:x.sourceRow??null,
   originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
- return entries.filter(x=>x.date.startsWith('2026-')).map(x=>{normalizeWindmoon(x);return x});
+ return entries.filter(x=>x.date.startsWith('2026-')).map(x=>{normalizeWindmoon(x);Object.assign(x,canonicalCategory(x.ledgerType,x.category,x.subcategory));return x});
 }
 
 const numInput=raw=>{
@@ -112,6 +112,7 @@ function load(){
      state={...blank(),...existing};
      if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
+     taxonomy();
      if(!state.windmoonSubcategoryMigration){
        const migrated=state.records.reduce((n,x)=>n+(normalizeWindmoon(x)?1:0),0);
        state.windmoonSubcategoryMigration=true;
@@ -239,24 +240,200 @@ const SHEET_CATS={
   '쇼핑':['온라인','오프라인','풍월관'],'온라인쇼핑':['풍월관'],'여행':['풍월관'],'교통비':['풍월관'],'기타':['풍월관']
  }
 };
+/* User-editable taxonomy. Stable scope/group IDs survive label renames. */
+const TAX_PAYMENT_DEFAULTS=['현금','현금/송금','계좌이체','신용카드','체크카드','온누리상품권','쿠팡 KB','신한 Hi-Point','신한 Classic Y'];
+function taxonomy(){
+ if(!state.taxonomy||typeof state.taxonomy!=='object'||Array.isArray(state.taxonomy))state.taxonomy=JSON.parse(JSON.stringify(SHEET_CATS));
+ if(!state.taxonomyAliases||!Array.isArray(state.taxonomyAliases))state.taxonomyAliases=[];
+ if(!state.customLabels||typeof state.customLabels!=='object')state.customLabels={scopes:{},groups:{}};
+ if(!state.customLabels.scopes)state.customLabels.scopes={};
+ if(!state.customLabels.groups)state.customLabels.groups={};
+ // When resetting local state, old custom labels must not remain in module-level objects.
+ for(const k of Object.keys(LABEL))if(!['personal','business','windmoon','review','transfer','excluded'].includes(k))delete LABEL[k];
+ for(const k of Object.keys(GROUP))if(!['fixed','consumption'].includes(k))delete GROUP[k];
+ Object.assign(LABEL,{personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'});
+ Object.assign(GROUP,{fixed:'고정지출',consumption:'소비지출'});
+ Object.assign(LABEL,state.customLabels.scopes);
+ Object.assign(GROUP,state.customLabels.groups);
+ for(const group of Object.keys(GROUP))if(!state.taxonomy[group])state.taxonomy[group]={};
+ if(!Array.isArray(state.paymentMethods)||!state.paymentMethods.length)state.paymentMethods=[...TAX_PAYMENT_DEFAULTS];
+ if(!Array.isArray(state.hiddenPaymentMethods))state.hiddenPaymentMethods=[];
+ return state.taxonomy;
+}
+const categoriesFor=group=>taxonomy()[group]||{};
+const valueOptions=values=>values.map(s=>'<option value="'+E(s)+'"></option>').join('');
+function paymentChoices(){
+ taxonomy();
+ const hidden=new Set(state.hiddenPaymentMethods||[]);
+ const vals=new Set([...state.paymentMethods,...state.records.map(x=>x.payment).filter(Boolean)].filter(x=>!hidden.has(x)));
+ return [...vals].sort((a,b)=>a.localeCompare(b,'ko'));
+}
+function canonicalCategory(group,category,subcategory){
+ let major=String(category||''),minor=String(subcategory||'');
+ for(const alias of state.taxonomyAliases||[]){
+   if(alias.group!==group)continue;
+   if(alias.type==='major'&&alias.from===major)major=alias.to;
+   if(alias.type==='minor'&&alias.major===major&&alias.from===minor)minor=alias.to;
+ }
+ return {category:major,subcategory:minor};
+}
+function addInputCategories(rows,confirmNew=true){
+ taxonomy();
+ const additions=new Map(),payments=new Set();
+ for(const row of rows){
+   if(row.direction!=='expense')continue;
+   const group=row.ledgerType,major=String(row.category||'').trim(),minor=String(row.subcategory||'').trim(),pay=String(row.payment||'').trim();
+   if(!(group in GROUP)||!major)throw Error('지출 종류와 대분류를 확인하세요.');
+   if(major.length>80||minor.length>80||pay.length>100)throw Error('분류나 결제수단 이름이 너무 깁니다.');
+   const known=categoriesFor(group);
+   if(!(major in known)){if(!additions.has(group+'|'+major))additions.set(group+'|'+major,{group,major,subs:new Set()})}
+   if(minor&&!known[major]?.includes(minor)){
+     const key=group+'|'+major;
+     if(!additions.has(key))additions.set(key,{group,major,subs:new Set()});
+     additions.get(key).subs.add(minor);
+   }
+   if(pay&&!paymentChoices().includes(pay))payments.add(pay);
+ }
+ const newMajors=[...additions.values()].filter(x=>!(x.major in categoriesFor(x.group))).map(x=>x.major);
+ const newSubs=[...additions.values()].flatMap(x=>[...x.subs].map(v=>x.major+' / '+v));
+ if(confirmNew&&(newMajors.length||newSubs.length||payments.size)){
+   const txt=[newMajors.length?'새 대분류: '+newMajors.join(', '):'',
+    newSubs.length?'새 소분류: '+newSubs.join(', '):'',
+    payments.size?'새 결제수단: '+[...payments].join(', '):''].filter(Boolean).join('\n');
+   if(!confirm('목록에 없는 항목을 등록하고 저장할까요?\n'+txt))return false;
+ }
+ for(const {group,major,subs} of additions.values()){
+   if(!(major in taxonomy()[group]))taxonomy()[group][major]=[];
+   for(const sub of subs)if(!taxonomy()[group][major].includes(sub))taxonomy()[group][major].push(sub);
+ }
+ for(const p of payments)state.paymentMethods.push(p);
+ return true;
+}
+function validateTaxName(value){const v=String(value||'').trim();if(!v||v.length>80)throw Error('이름은 1~80글자로 입력하세요.');return v}
+function editTax(action,group,major,minor,name){
+ taxonomy();const next=action==='hide-major'||action==='hide-minor'?'':validateTaxName(name);
+ const groupCats=categoriesFor(group);
+ if(action==='add-major'){
+   if(!GROUP[group]||next in groupCats)throw Error('이미 있거나 올바르지 않은 대분류입니다.');
+   groupCats[next]=[];
+ }else if(action==='rename-major'){
+   if(!(major in groupCats)||next in groupCats)throw Error('대분류 이름이 중복되거나 존재하지 않습니다.');
+   const entries=Object.entries(groupCats);state.taxonomy[group]=Object.fromEntries(entries.map(([c,v])=>[c===major?next:c,v]));
+   for(const r of [...state.records,...sheetData.rows])if(r.ledgerType===group&&r.category===major)r.category=next;
+   for(const rule of Object.values(state.customRules))if(rule.ledgerType===group&&rule.category===major)rule.category=next;
+   for(const payee of Object.values(state.rentRecipients||{}))if(group==='fixed'&&payee.category===major)payee.category=next;
+   for(const a of state.taxonomyAliases)if(a.type==='minor'&&a.group===group&&a.major===major)a.major=next;
+   state.taxonomyAliases.push({type:'major',group,from:major,to:next});
+ }else if(action==='hide-major'){
+   if(!(major in groupCats))throw Error('대분류를 찾을 수 없습니다.');
+   delete groupCats[major];
+ }else if(action==='add-minor'){
+   if(!Array.isArray(groupCats[major])||groupCats[major].includes(next))throw Error('소분류 이름이 중복되거나 대분류가 없습니다.');
+   groupCats[major].push(next);
+ }else if(action==='rename-minor'){
+   if(!groupCats[major]?.includes(minor)||groupCats[major].includes(next))throw Error('소분류 이름이 중복되거나 존재하지 않습니다.');
+   groupCats[major][groupCats[major].indexOf(minor)]=next;
+   for(const r of [...state.records,...sheetData.rows])if(r.ledgerType===group&&r.category===major&&r.subcategory===minor)r.subcategory=next;
+   for(const rule of Object.values(state.customRules))if(rule.ledgerType===group&&rule.category===major&&rule.subcategory===minor)rule.subcategory=next;
+   state.taxonomyAliases.push({type:'minor',group,major,from:minor,to:next});
+ }else if(action==='hide-minor'){
+   if(!groupCats[major]?.includes(minor))throw Error('소분류를 찾을 수 없습니다.');
+   groupCats[major].splice(groupCats[major].indexOf(minor),1);
+ }else if(action==='rename-scope'||action==='rename-group'){
+   const obj=action==='rename-scope'?LABEL:GROUP;
+   if(!(group in obj)||Object.entries(obj).some(([k,v])=>k!==group&&v===next))throw Error('중복 이름이거나 알 수 없는 항목입니다.');
+   obj[group]=next;state.customLabels[action==='rename-scope'?'scopes':'groups'][group]=next;
+ }else if(action==='add-scope'||action==='add-group'){
+   const obj=action==='add-scope'?LABEL:GROUP;
+   if(Object.values(obj).includes(next))throw Error('이미 같은 이름이 있습니다.');
+   const id=(action==='add-scope'?'owner-':'group-')+uid();
+   obj[id]=next;state.customLabels[action==='add-scope'?'scopes':'groups'][id]=next;
+   if(action==='add-group')state.taxonomy[id]={};
+ }else if(action==='add-payment'){
+   if(paymentChoices().includes(next))throw Error('동일한 결제수단이 있습니다.');
+   state.paymentMethods.push(next);
+   state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
+ }else if(action==='rename-payment'){
+   if(paymentChoices().includes(next))throw Error('동일한 결제수단이 있습니다.');
+   if(!state.paymentMethods.includes(major))throw Error('목록에 없는 결제수단입니다.');
+   state.paymentMethods[state.paymentMethods.indexOf(major)]=next;
+   if(state.hiddenPaymentMethods.includes(next))state.hiddenPaymentMethods=state.hiddenPaymentMethods.filter(x=>x!==next);
+   // Keep imported card statement text unchanged; only manual entry labels may change.
+   for(const x of state.records)if(x.source==='manual'&&x.payment===major)x.payment=next;
+   for(const x of sheetData.rows)if(x.payment===major)x.payment=next;
+ }else if(action==='hide-payment'){
+   if(!paymentChoices().includes(major))throw Error('결제수단을 찾을 수 없습니다.');
+   state.paymentMethods=state.paymentMethods.filter(x=>x!==major);
+   if(!state.hiddenPaymentMethods.includes(major))state.hiddenPaymentMethods.push(major);
+ }else throw Error('알 수 없는 분류 편집입니다.');
+ return true;
+}
+function categoriesPage(){
+ taxonomy();
+ const labelControls=(pairs,action)=>pairs.map(([id,label])=>
+  '<form class="tax-line" data-tax-action="'+action+'" data-tax-group="'+E(id)+'"><code>'+E(id)+'</code>'+
+  '<input name="value" maxlength="80" value="'+E(label)+'" required aria-label="'+E(label)+' 이름">'+
+  '<button class="btn subtle" type="submit">이름 변경</button></form>').join('');
+ const sections=Object.entries(GROUP).map(([group,title])=>
+  '<section class="surface tax-section"><div class="surface-head"><div><h2>'+E(title)+' · 대분류/소분류</h2><p>이름 변경은 과거 기록에도 적용하며, 숨김은 새 입력 목록에서만 제외됩니다.</p></div></div>'+
+  '<div class="tax-body">'+Object.entries(categoriesFor(group)).map(([major,subs])=>
+   '<div class="tax-major"><form class="tax-line" data-tax-action="rename-major" data-tax-group="'+E(group)+'" data-tax-major="'+E(major)+'">'+
+   '<b>대분류</b><input name="value" required maxlength="80" value="'+E(major)+'">'+
+   '<button type="submit" class="btn subtle">이름 변경</button><button type="button" class="btn danger-outline" data-tax-hide="hide-major" data-tax-group="'+E(group)+'" data-tax-major="'+E(major)+'">숨기기</button></form>'+
+   '<div class="tax-minors">'+subs.map(minor=>
+    '<form class="tax-line" data-tax-action="rename-minor" data-tax-group="'+E(group)+'" data-tax-major="'+E(major)+'" data-tax-minor="'+E(minor)+'">'+
+    '<span>소분류</span><input required name="value" maxlength="80" value="'+E(minor)+'">'+
+    '<button type="submit" class="btn subtle">변경</button><button type="button" class="btn danger-outline" data-tax-hide="hide-minor" data-tax-group="'+E(group)+'" data-tax-major="'+E(major)+'" data-tax-minor="'+E(minor)+'">숨기기</button></form>').join('')+
+   '<form class="tax-line tax-add" data-tax-action="add-minor" data-tax-group="'+E(group)+'" data-tax-major="'+E(major)+'"><span>소분류</span><input name="value" required maxlength="80" placeholder="새 소분류">'+
+   '<button class="btn subtle" type="submit">＋ 추가</button></form></div></div>').join('')+
+  '<form class="tax-line tax-add" data-tax-action="add-major" data-tax-group="'+E(group)+'"><b>대분류</b><input name="value" maxlength="80" required placeholder="새 대분류">'+
+  '<button class="btn primary" type="submit">＋ 추가</button></form></div></section>').join('');
+ const paymentList=paymentChoices().map(pay=>
+  '<form class="tax-line" data-tax-action="rename-payment" data-tax-major="'+E(pay)+'"><span>결제수단</span>'+
+  '<input name="value" maxlength="80" required value="'+E(pay)+'">'+
+  '<button class="btn subtle" type="submit">이름 변경</button>'+
+  (state.paymentMethods.includes(pay)?'<button type="button" class="btn danger-outline" data-tax-hide="hide-payment" data-tax-major="'+E(pay)+'">숨기기</button>':'')+'</form>').join('');
+ return pageIntro('CATEGORY MANAGER','분류 관리','사용처·지출 종류·대분류·소분류·결제수단을 직접 관리합니다. 검색 입력에서 기존 항목을 선택하거나 새로운 이름을 저장할 수도 있습니다.')+
+ '<div class="tax-grid"><section class="surface"><div class="surface-head"><h2>사용처</h2></div><div class="tax-body">'+labelControls(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),'rename-scope')+
+ '<form class="tax-line tax-add" data-tax-action="add-scope"><b>새 사용처</b><input name="value" required maxlength="80" placeholder="사용처 추가"><button class="btn primary">＋ 추가</button></form></div></section>'+
+ '<section class="surface"><div class="surface-head"><h2>지출 종류</h2></div><div class="tax-body">'+labelControls(Object.entries(GROUP),'rename-group')+
+ '<form class="tax-line tax-add" data-tax-action="add-group"><b>새 지출 종류</b><input name="value" maxlength="80" required placeholder="지출 종류 추가"><button class="btn primary">＋ 추가</button></form></div></section></div>'+
+ sections+'<section class="surface"><div class="surface-head"><div><h2>결제수단</h2><p>카드사 원본 결제명은 변경하지 않고, 직접 입력한 결제명만 바뀝니다.</p></div></div>'+
+ '<div class="tax-body">'+paymentList+'<form class="tax-line tax-add" data-tax-action="add-payment"><b>새 결제수단</b><input name="value" required maxlength="80" placeholder="결제수단 추가">'+
+ '<button class="btn primary">＋ 추가</button></form></div></section>'+
+ '<div class="notice"><b>원본 보존</b><p>분류 이름만 바꾸며 거래 금액은 변경되지 않습니다. 원본 카드 정보는 그대로 유지하고, 자동분류 규칙은 변경된 이름으로 연결합니다.</p></div>';
+}
+function handleTaxForm(form){
+ const a=form.dataset.taxAction,g=form.dataset.taxGroup||'',major=form.dataset.taxMajor||'',minor=form.dataset.taxMinor||'';
+ const value=String(new FormData(form).get('value')||'');
+ const old=JSON.stringify(state);
+ try{
+   editTax(a,g,major,minor,value);
+   if(!save()){state=JSON.parse(old);return}
+   render();toast('분류 설정을 저장했습니다.');
+ }catch(err){state=JSON.parse(old);toast(err.message)}
+}
+
+
 const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note'];
 const SHEET_TITLES={date:'날짜',amount:'금액 (원)',scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',merchant:'거래처',payment:'결제수단',note:'메모'};
 const sheetData={rows:[],date:now(),limit:200};
 const sheetNewRow=()=>({date:sheetData.date,amount:'',scope:'personal',scopeManual:false,ledgerType:'consumption',category:'',subcategory:'',merchant:'',payment:'',note:''});
 const sheetOptions=(items,current)=>items.map(([val,label])=>'<option value="'+E(val)+'"'+(val===current?' selected':'')+'>'+E(label)+'</option>').join('');
 function sheetSelectOptions(field,row){
- if(field==='scope')return sheetOptions([['personal','개인'],['business','편의점'],['windmoon','풍월관'],['review','미분류']],row.scope);
- if(field==='ledgerType')return sheetOptions([['consumption','소비지출'],['fixed','고정지출']],row.ledgerType);
- if(field==='category')return sheetOptions([['','대분류 선택'],...Object.keys(SHEET_CATS[row.ledgerType]||{}).map(c=>[c,c])],row.category);
- return sheetOptions([['','소분류 선택 (선택)'],...(SHEET_CATS[row.ledgerType]?.[row.category]||[]).map(c=>[c,c])],row.subcategory);
+ if(field==='scope')return sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),row.scope);
+ if(field==='ledgerType')return sheetOptions(Object.entries(GROUP),row.ledgerType);
+ if(field==='category')return sheetOptions([['','대분류 선택'],...Object.keys(categoriesFor(row.ledgerType)).map(c=>[c,c]),['__add__','＋ 새 대분류 추가']],row.category);
+ return sheetOptions([['','소분류 선택 (선택)'],...(categoriesFor(row.ledgerType)[row.category]||[]).map(c=>[c,c])],row.subcategory);
 }
 function sheetCell(field,row,index){
  const v=String(row[field]??''),attrs='data-sheet-field="'+field+'" data-sheet-index="'+index+'" aria-label="'+(index+1)+'행 '+SHEET_TITLES[field]+'"';
  if(['scope','ledgerType','category'].includes(field))return '<select '+attrs+'>'+sheetSelectOptions(field,row)+'</select>';
  if(field==='subcategory')return '<input '+attrs+' type="text" list="sheet-sub-'+index+'" placeholder="소분류 (선택)" value="'+E(v)+'"><datalist id="sheet-sub-'+index+'">'+
-   (SHEET_CATS[row.ledgerType]?.[row.category]||[]).map(x=>'<option value="'+E(x)+'"></option>').join('')+'</datalist>';
+   (categoriesFor(row.ledgerType)[row.category]||[]).map(x=>'<option value="'+E(x)+'"></option>').join('')+'</datalist>';
  return '<input '+attrs+' type="'+(field==='date'?'date':'text')+'"'+(field==='amount'?' inputmode="numeric"':'')+
-   ' autocomplete="off" placeholder="'+(field==='merchant'?'거래처 입력':field==='amount'?'금액':field==='payment'?'카드·현금':'')+'" value="'+E(v)+'">';
+   (field==='payment'?' list="sheet-payment-choices"':'')+
+   ' autocomplete="off" placeholder="'+(field==='merchant'?'거래처 입력':field==='amount'?'금액':field==='payment'?'결제수단 선택 또는 입력':'')+'" value="'+E(v)+'">';
 }
 function sheetRowMarkup(row,i){
  return '<tr data-sheet-row="'+i+'"><th scope="row">'+(i+1)+'</th>'+
@@ -266,7 +443,7 @@ function sheetRowMarkup(row,i){
 function sheetPage(){
  if(!sheetData.rows.length)sheetData.rows=Array.from({length:10},sheetNewRow);
  return pageIntro('SHEET INPUT','시트형 일괄 입력','기존 엑셀형 입력창을 복구했습니다. 현금 발주·사업비 등 직접 기록할 지출을 여러 행에 작성하고 한 번에 저장합니다.')+
- '<section class="surface sheet-entry"><div class="surface-head"><div><h2>지출 일괄 입력</h2><p>Enter·Tab·방향키로 셀 이동 · Excel에서 여러 칸 복사/붙여넣기 · 대분류에 따른 소분류 추천</p></div>'+
+ '<section class="surface sheet-entry"><datalist id="sheet-payment-choices">'+valueOptions(paymentChoices())+'</datalist><div class="surface-head"><div><h2>지출 일괄 입력</h2><p>Enter·Tab·방향키로 셀 이동 · Excel에서 여러 칸 복사/붙여넣기 · 대분류에 따른 소분류 추천</p></div>'+
  '<label class="sheet-date-label">기본 날짜 <input id="sheet-default-date" type="date" value="'+E(sheetData.date)+'"></label></div>'+
  '<div class="sheet-entry-scroll" id="sheet-entry-scroll"><table class="sheet-entry-table" id="sheet-entry-table"><thead><tr><th>#</th>'+
  SHEET_FIELDS.map(f=>'<th>'+SHEET_TITLES[f]+'</th>').join('')+'<th>삭제</th></tr></thead><tbody>'+
@@ -301,8 +478,8 @@ function sheetRowFromInput(row,i){
  const fail=msg=>{throw Error((i+1)+'행: '+msg)};
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<'2026-01-01'||Number.isNaN(Date.parse(date+'T00:00:00Z')))fail('올바른 날짜를 입력하세요');
  if(!Number.isSafeInteger(amount)||amount<=0)fail('금액은 0보다 커야 합니다');
- if(!['personal','business','windmoon','review'].includes(scope))fail('사용처를 선택하세요');
- if(!['consumption','fixed'].includes(type))fail('지출 종류를 선택하세요');
+ if(!(scope in LABEL)||['transfer','excluded'].includes(scope))fail('사용처를 선택하세요');
+ if(!(type in GROUP))fail('지출 종류를 선택하세요');
  if(!category)fail('대분류를 선택하세요');
  if(!merchant)fail('거래처를 입력하세요');
  const value={id:'manual-sheet-'+uid(),date,time:'',amount,direction:'expense',scope,ledgerType:type,
@@ -310,6 +487,7 @@ function sheetRowFromInput(row,i){
   note:String(row.note||'').trim(),status:scope==='review'?'review':'confirmed',manual:true,
   source:'manual',sourceSheet:'시트형 직접 입력',bankKey:''};
  normalizeWindmoon(value);
+ Object.assign(value,canonicalCategory(value.ledgerType,value.category,value.subcategory));
  return value;
 }
 function submitSheet(){
@@ -324,8 +502,10 @@ function submitSheet(){
  const message=candidates.length+'건 ('+won(sum(candidates))+')을 저장할까요?'+
  (dupCount?'\n주의: 날짜·금액·거래처가 같은 중복 의심 '+dupCount+'건이 있습니다.':'');
  if(!confirm(message))return;
- const count=state.records.length;state.records.push(...candidates);
- if(!save()){state.records.length=count;return}
+ const previous=JSON.stringify(state);
+ if(!addInputCategories(candidates))return;
+ state.records.push(...candidates);
+ if(!save()){state=JSON.parse(previous);return}
  sheetData.rows=Array.from({length:10},sheetNewRow);
  render();toast(candidates.length+'건을 시트에서 저장했습니다.');
 }
@@ -345,9 +525,9 @@ function pasteSheetGrid(e){
    const f=SHEET_FIELDS[startCol+j];if(!f)break;
    const v=rows[i][j];
    const entry=sheetData.rows[startIndex+i];
-   if(f==='scope'&&!['personal','business','windmoon','review'].includes(v))continue;
-   if(f==='ledgerType'&&!['fixed','consumption'].includes(v))continue;
-   if(f==='category'&&!Object.keys(SHEET_CATS[entry.ledgerType]||{}).includes(v))continue;
+   if(f==='scope'&&!(v in LABEL))continue;
+   if(f==='ledgerType'&&!(v in GROUP))continue;
+   if(f==='category'&&!Object.keys(categoriesFor(entry.ledgerType)).includes(v))continue;
    entry[f]=v;
  }
  rerenderSheet(startIndex,el.dataset.sheetField);
@@ -404,7 +584,7 @@ function sheetSelectChange(el){
    if(sub){sub.value='';const list=tr.querySelector('datalist');if(list)list.innerHTML=''}
  }else if(el.dataset.sheetField==='category'){
    const sub=tr.querySelector('[data-sheet-field="subcategory"]');
-   if(sub){sub.value='';const list=tr.querySelector('datalist');if(list)list.innerHTML=(SHEET_CATS[tr.querySelector('[data-sheet-field="ledgerType"]').value]?.[el.value]||[]).map(v=>'<option value="'+E(v)+'"></option>').join('')}
+   if(sub){sub.value='';const list=tr.querySelector('datalist');if(list)list.innerHTML=(categoriesFor(tr.querySelector('[data-sheet-field="ledgerType"]').value)[el.value]||[]).map(v=>'<option value="'+E(v)+'"></option>').join('')}
  }
  // Do not overwrite a manually selected owner; only infer when owner is still default.
  const category=tr.querySelector('[data-sheet-field="category"]')?.value||'',
@@ -666,7 +846,7 @@ function render(){
  $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.status==='review'&&x.direction==='expense').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
- container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,categories:categoriesPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
  $('#sidebar').classList.remove('open');
  setStatus('이 브라우저에 저장됨');
 }
@@ -690,6 +870,7 @@ function chooseScope(id,scope){
  const classification=G.classifyChoice(scope,row);
  const corrected={...classification};
  delete corrected.action;delete corrected.confidence;
+ Object.assign(corrected,canonicalCategory(corrected.ledgerType,corrected.category,corrected.subcategory));
  patchRecord(id,corrected);
  toast(scope==='exclude'?'거래를 지출 합계에서 제외했습니다.':LABEL[scope]+'으로 분류했습니다.');
 }
@@ -775,6 +956,7 @@ async function processBank(file,range=bankImportRange){
    };
    if(match.ambiguous){item.scope='review';item.status='review'}
    normalizeWindmoon(item);
+   Object.assign(item,canonicalCategory(item.ledgerType,item.category,item.subcategory));
    if(item.status==='review')reviewCount++;
    all.push(item);
  }
@@ -861,6 +1043,7 @@ async function importLegacy(file){
    // Retain manually corrected ownership, attached bank merchant and link.
    if(old.status!=='review'){old.scope=entry.scope;old.ledgerType=entry.ledgerType}
    normalizeWindmoon(old);
+   Object.assign(old,canonicalCategory(old.ledgerType,old.category,old.subcategory));
  }
  const linkedBankIds=new Set();
  for(const original of additions){
@@ -883,7 +1066,7 @@ async function importLegacy(file){
    }
  }
  if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
- for(const x of additions)normalizeWindmoon(x);
+ for(const x of additions){normalizeWindmoon(x);Object.assign(x,canonicalCategory(x.ledgerType,x.category,x.subcategory))}
  state.records.push(...additions);
  mergeDailyLotto(dailyNew);
  mergeStoreProfits(Object.fromEntries(profitsNew));
@@ -941,11 +1124,21 @@ function resetAllV2(confirmAction=true){
  state={...blank(),legacyDailySynced:true,windmoonSubcategoryMigration:true,migratedFromV1:false};
  if(!save()){state=previous;return false}
  preview=null;lastBankFile=null;bankLoadToken++;
+ taxonomy();
  editing=null;sheetData.rows=[];sheetData.date=now();period='all';scopeFilter='all';typeFilter='all';q='';offset=0;reviewOffset=0;salesMonth=ym();lottoMonth=ym();
  render();toast('V2 데이터가 초기화됐습니다. 기존 V1 저장 기록은 유지됩니다.');
  return true;
 }
 
+function updateEditorSuggestions(){
+ const form=$('#editor-form');if(!form)return;
+ const group=form.elements.ledgerType?.value||'consumption';
+ const category=form.elements.category?.value||'';
+ const majorList=$('#editor-major-options'),subList=$('#editor-minor-options'),payList=$('#editor-payment-options');
+ if(majorList)majorList.innerHTML=valueOptions([...new Set([...Object.keys(categoriesFor(group)),category].filter(Boolean))]);
+ if(subList)subList.innerHTML=valueOptions([...new Set([...(categoriesFor(group)[category]||[]),form.elements.subcategory?.value||''].filter(Boolean))]);
+ if(payList)payList.innerHTML=valueOptions(paymentChoices());
+}
 function editRecord(id){
  const r=id?state.records.find(x=>x.id===id):null;
  editing=id||'new';
@@ -959,12 +1152,15 @@ function editRecord(id){
  f.elements.payment.value=r?.payment||'';
  f.elements.onnuri.checked=r?isOnnuri(r):false;
  const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:(r?.payment?'원본 결제수단: '+r.payment:'');
- f.elements.scope.value=r?.scope==='review'?'personal':r?.scope||'personal';
+ f.elements.scope.innerHTML=sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),r?.scope||'personal');
+ f.elements.ledgerType.innerHTML=sheetOptions(Object.entries(GROUP),r?.ledgerType||'consumption');
+ f.elements.scope.value=r?.scope||'personal';
  f.elements.ledgerType.value=r?.ledgerType||'consumption';
  f.elements.category.value=r?.category||'';
  f.elements.subcategory.value=r?.subcategory||'';
  if(!r?.subcategory&&r?.scope==='windmoon')f.elements.subcategory.value='풍월관';
  f.elements.note.value=r?.note||'';
+ updateEditorSuggestions();
  dlg.showModal();
 }
 function submitEditor(f){
@@ -974,6 +1170,8 @@ function submitEditor(f){
  const scope=String(data.get('scope')),ledgerType=String(data.get('ledgerType')),category=String(data.get('category')||'').trim();
  const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),onnuri:data.has('onnuri'),note:String(data.get('note')||''),scope,ledgerType,category:category||'기타',subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true,direction:'expense'};
  normalizeWindmoon(entry);
+ Object.assign(entry,canonicalCategory(entry.ledgerType,entry.category,entry.subcategory));
+ if(!addInputCategories([entry]))return;
  if(editing&&editing!=='new'){const row=state.records.find(x=>x.id===editing);if(row)Object.assign(row,entry)}
  else state.records.push({...entry,id:'manual-'+uid(),direction:'expense',source:'manual',sourceSheet:'직접 입력',time:'',bankKey:''});
  $('#editor').close();save();render();toast('거래를 저장했습니다.');
@@ -983,6 +1181,17 @@ function onClick(event){
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
+ if(target.dataset.taxHide){
+   const action=target.dataset.taxHide,group=target.dataset.taxGroup||'',major=target.dataset.taxMajor||'',minor=target.dataset.taxMinor||'';
+   if(!confirm('이 분류를 신규 입력 목록에서 숨길까요? 과거 거래는 삭제되지 않습니다.'))return;
+   const before=JSON.stringify(state);
+   try{
+     editTax(action,group,major,minor,'');
+     if(!save()){state=JSON.parse(before);return}
+     render();toast('분류를 입력 목록에서 숨겼습니다.');
+   }catch(err){state=JSON.parse(before);toast(err.message)}
+   return;
+ }
  if(target.dataset.deleteRecord){const id=target.dataset.deleteRecord;if(deleteRecordById(id)&&$('#editor')?.open)$('#editor').close();return}
  if(target.dataset.deleteLotto){deleteDailyLotto(target.dataset.deleteLotto);return}
  if(target.id==='reset-all-v2'){resetAllV2();return}
@@ -1032,7 +1241,26 @@ function onChange(e){
    readSheetCells();const old=sheetData.date;sheetData.date=el.value;
    sheetData.rows.forEach(x=>{if(x.date===old)x.date=sheetData.date});render();
  }return}
- if(el.dataset.sheetField){const row=sheetData.rows[Number(el.dataset.sheetIndex)];if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}sheetSelectChange(el);if(row&&row.scope==='windmoon'&&['scope','category'].includes(el.dataset.sheetField))row.subcategory='풍월관';return}
+ if(el.dataset.sheetField){
+   const row=sheetData.rows[Number(el.dataset.sheetIndex)];
+   if(el.dataset.sheetField==='category'&&el.value==='__add__'){
+     const type=el.closest('tr')?.querySelector('[data-sheet-field="ledgerType"]')?.value||'consumption';
+     const name=prompt('추가할 대분류 이름을 입력하세요.','');
+     if(!name){el.value=row?.category||'';return}
+     try{
+       editTax('add-major',type,'','',name);
+       if(!save())return;
+       el.innerHTML=sheetSelectOptions('category',{ledgerType:type,category:name});
+       el.value=name;
+       toast('대분류 "'+name.trim()+'"을 추가했습니다.');
+     }catch(err){el.value=row?.category||'';toast(err.message);return}
+   }
+   if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}
+   sheetSelectChange(el);
+   if(row&&row.scope==='windmoon'&&['scope','category'].includes(el.dataset.sheetField))row.subcategory='풍월관';
+   return;
+ }
+ if(el.id==='edit-group'||el.id==='edit-category'){updateEditorSuggestions();return}
  if(el.id==='edit-scope'){
    const sub=$('#edit-subcategory');if(sub){
      if(el.value==='windmoon')sub.value='풍월관';
@@ -1082,6 +1310,7 @@ function init(){
  document.addEventListener('submit',e=>{
    if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}
    if(e.target.id==='lotto-daily-form'){e.preventDefault();saveLottoDaily(e.target)}
+   if(e.target.dataset.taxAction){e.preventDefault();handleTaxForm(e.target)}
  });
  document.addEventListener('paste',pasteSheetGrid);
  document.addEventListener('keydown',e=>{

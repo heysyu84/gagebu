@@ -124,3 +124,22 @@
 .reset-counts{display:flex;gap:8px;flex-wrap:wrap}.reset-counts span{border:1px solid #efe4df;border-radius:8px;background:#faf7f6;padding:9px 12px;font-size:11px;color:#826d67}.reset-counts b{color:#684139}
 .lotto-day-table td:last-child{width:80px}
 @media(max-width:650px){.reset-body{padding:8px 16px 20px}.reset-body>.btn{width:100%}.editor-actions{flex-wrap:wrap}}
+
+/* Category administration and autocomplete inputs */
+.tax-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.tax-grid>.surface{min-width:0}
+.tax-body{padding:2px 22px 24px}
+.tax-line{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid #ebf1ed;min-width:0}
+.tax-line:last-child{border-bottom:0}.tax-line>input{flex:1;min-width:110px;height:36px;border:1px solid #dbe9e1;border-radius:7px;background:#fff;padding:7px 10px;font-size:12px;color:#285046}
+.tax-line>code,.tax-line>b,.tax-line>span{font-size:11px;color:#719286;white-space:nowrap;min-width:66px}
+.tax-line>.btn{flex:none;min-height:34px;padding:7px 10px;font-size:11px}
+.tax-line>.danger-outline{padding:7px 8px;font-size:10px}
+.tax-add{margin-top:12px;padding-top:16px;border-top:1px solid #e8f0ec}.tax-add input{background:#f8fbf9;border-style:dashed}
+.tax-major{border:1px solid #e2ede7;border-radius:12px;margin:10px 0 15px;background:#fcfefd;padding:8px 12px 10px}
+.tax-major>.tax-line{padding-top:7px}
+.tax-minors{padding:0 0 1px 18px;border-left:2px solid #e3eee8;margin:3px 4px 6px 5px}
+.tax-minors .tax-line{padding:7px 0 7px 12px}
+.tax-minors .tax-line>span{color:#95a7a1}
+.tax-section>.surface-head{padding-bottom:8px}
+@media(max-width:850px){.tax-grid{grid-template-columns:1fr}}
+@media(max-width:650px){.tax-body{padding:2px 13px 18px}.tax-line{flex-wrap:wrap}.tax-line>input{flex:1 1 55%;min-width:110px}.tax-line>.btn{flex:1 1 auto}.tax-minors{padding-left:4px;margin-left:0}.tax-major{padding:7px 9px}.tax-line>code,.tax-line>b,.tax-line>span{min-width:50px}}
