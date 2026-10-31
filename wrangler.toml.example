@@ -1,0 +1,13 @@
+name = "store-ledger-private-api"
+main = "worker/index.js"
+compatibility_date = "2026-10-31"
+workers_dev = true
+
+# Replace with the database_id from 'npx wrangler d1 create store-ledger-private'
+[[d1_databases]]
+binding = "DB"
+database_name = "store-ledger-private"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[vars]
+ALLOWED_ORIGINS = "https://heysyu84.github.io"
