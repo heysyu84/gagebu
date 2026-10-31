@@ -198,7 +198,7 @@ function topFilters(){
 }
 /* Situation board visualizations are derived at render time; never persist
    aggregates or alter underlying ledger rows. Period controls every figure. */
-let dashboardPayMetric='amount';
+let dashboardPayMetric='amount',dashboardPayAll=false;
 const dashWonShort=value=>{
  const amount=Math.abs(n(value)),sign=n(value)<0?'−':'';
  if(amount>=100000000)return sign+(amount/100000000).toLocaleString('ko-KR',{maximumFractionDigits:1})+'억원';
@@ -299,7 +299,7 @@ function dashboard(){
  const largest=confirmed.reduce((best,x)=>!best||n(x.amount)>n(best.amount)?x:best,null);
  const paymentButtons='<div class="md-segment">'+
    ['amount','count'].map(mode=>'<button type="button" data-dashboard-pay="'+mode+'" aria-pressed="'+(dashboardPayMetric===mode)+'" class="'+(dashboardPayMetric===mode?'active':'')+'">'+(mode==='amount'?'금액':'건수')+'</button>').join('')+'</div>';
- const paymentRank=dashRankList(payments,8,dashboardPayMetric);
+ const paymentRank=dashRankList(payments,dashboardPayAll?1000:8,dashboardPayMetric);
  const head=pageIntro('MONEY CONTROL BOARD','가게부 상황판',
    '수입·지출 흐름부터 결제수단, 사용처, 거래처까지 한눈에 파악합니다. 집계는 저장된 기록을 실시간 분석하며 원장을 변경하지 않습니다.',
    '<div class="md-period-control"><label for="period-filter">조회 기간</label><select id="period-filter">'+monthlyOptions()+'</select></div>');
@@ -322,7 +322,10 @@ function dashboard(){
  '<section class="surface md-panel"><div class="surface-head"><div><h2>사용처별 지출 비중</h2><p>개인 · 편의점 · 풍월관은 서로 합산하지 않습니다.</p></div></div>'+
    scopeChart+'</section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>결제수단별 실제 사용</h2><p>온누리는 사용액만 계산하며, 동일 카드의 다른 표기는 합산합니다.</p></div>'+paymentButtons+'</div>'+
-   paymentRank+'<div class="md-panel-footer">선택 기간 '+payments.length+'종 · 총 '+won(total)+' · '+confirmed.length+'건</div></section>'+
+   paymentRank+
+ (payments.length>8?'<button type="button" class="md-expand-payments" data-dashboard-expand-payments="1">'+
+    (dashboardPayAll?'상위 8개만 보기':'전체 '+payments.length+'개 결제수단 보기')+'</button>':'')+
+ '<div class="md-panel-footer">선택 기간 '+payments.length+'종 · 총 '+won(total)+' · '+confirmed.length+'건</div></section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>대분류별 지출 금액 · 건수</p></div></div>'+dashRankList(categories,9)+
  '<div class="md-panel-footer">고정지출 '+dashWonShort(fixedAmount)+' · 소비지출 '+dashWonShort(consumptionAmount)+'</div></section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>많이 결제한 거래처</h2><p>같은 이름의 거래처를 합산한 상위 8곳</p></div></div>'+dashRankList(merchants,8)+'</section>'+
@@ -1666,6 +1669,7 @@ function onClick(event){
    dashboardPayMetric=target.dataset.dashboardPay==='count'?'count':'amount';
    render();return;
  }
+ if(target.dataset.dashboardExpandPayments){dashboardPayAll=!dashboardPayAll;render();return}
  if(target.id==='restore-bank-presets'){restoreBankSaladPresets();return}
  if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
    readSheetCells();const count=target.id==='sheet-add-5'?5:20;
