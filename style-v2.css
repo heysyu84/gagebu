@@ -74,3 +74,34 @@
 .lotto-confirm .incomplete-warning{color:#b48642;font-size:11px;flex-basis:100%;margin:0}
 .finance-overview{margin-top:14px}
 @media(max-width:650px){.sales-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.lotto-form-actions{flex-wrap:wrap;padding:16px}.lotto-form-actions button{width:100%}.lotto-confirm{padding:12px 16px 20px}.lotto-rate{margin-top:10px}.lotto-metrics strong{font-size:16px}}
+
+/* V2 spreadsheet-like entry: keyboard navigation, dependent categories and cash purchases */
+.sheet-entry .surface-head{align-items:center}
+.sheet-date-label{display:flex;gap:9px;align-items:center;white-space:nowrap;font-size:11px;color:#6c847e;font-weight:720}
+.sheet-date-label input{padding:8px 10px;min-height:38px;border:1px solid #d7e6df;border-radius:8px;color:#29483f}
+.sheet-entry-scroll{overflow:auto;max-height:65vh;border-top:1px solid var(--edge);border-bottom:1px solid var(--edge)}
+.sheet-entry-table{border-collapse:separate;border-spacing:0;min-width:1480px;width:100%;table-layout:fixed}
+.sheet-entry-table thead{position:sticky;top:0;z-index:4;background:#f5f9f6}
+.sheet-entry-table th{background:#f5f9f6;color:#718a82;text-align:left;font-size:11px;font-weight:750;padding:10px 8px;border-bottom:1px solid #dfe8e2}
+.sheet-entry-table th:first-child{width:42px;padding:10px 8px;text-align:center}
+.sheet-entry-table thead th:nth-child(2){width:138px}
+.sheet-entry-table thead th:nth-child(3){width:126px}
+.sheet-entry-table thead th:nth-child(4){width:105px}
+.sheet-entry-table thead th:nth-child(5){width:122px}
+.sheet-entry-table thead th:nth-child(6){width:145px}
+.sheet-entry-table thead th:nth-child(7){width:120px}
+.sheet-entry-table thead th:nth-child(8){width:185px}
+.sheet-entry-table thead th:nth-child(9){width:134px}
+.sheet-entry-table thead th:nth-child(10){width:186px}
+.sheet-entry-table thead th:nth-child(11){width:57px}
+.sheet-entry-table tbody th{font-size:11px;background:#fafcfb;color:#90a49d;text-align:center;border-bottom:1px solid #e7efea;position:sticky;left:0;z-index:1}
+.sheet-entry-table td{padding:4px 5px;border-right:1px solid #eff3f1;border-bottom:1px solid #e7efea}
+.sheet-entry-table tr:hover td{background:#f9fcfa}
+.sheet-entry-table td input,.sheet-entry-table td select{display:block;min-width:0;width:100%;height:34px;border:1px solid transparent;background:transparent;border-radius:6px;padding:6px 8px;color:#24443a;font-size:12px}
+.sheet-entry-table td input:hover,.sheet-entry-table td select:hover{border-color:#dbe9df;background:#fff}
+.sheet-entry-table td input:focus,.sheet-entry-table td select:focus{border:1px solid #42a889;outline:2px solid #b8e2cf;background:#fff}
+.sheet-entry-table .row-edit{min-height:31px;padding:4px 9px}
+.sheet-toolbar{padding:16px 20px;display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:13px}
+.sheet-toolbar-left{display:flex;flex-wrap:wrap;gap:7px;margin-right:auto}
+#sheet-row-counter{font-size:12px;color:#789087}
+@media(max-width:730px){.sheet-entry .surface-head{display:block}.sheet-date-label{margin-top:12px}.sheet-toolbar{padding:13px}.sheet-toolbar-left{width:100%}.sheet-toolbar-left .btn{flex:1}.sheet-toolbar #sheet-submit{width:100%}}

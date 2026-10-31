@@ -7,7 +7,7 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원',ym=()=>new Date().toISOString().slice(0,7);
 const now=()=>new Date().toISOString().slice(0,10),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'시트형 입력',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
@@ -184,6 +184,183 @@ function reviewPage(){
  '<div class="review-list">'+(list.length?list.slice(reviewOffset,reviewOffset+35).map((x,i)=>reviewCard(x,reviewOffset+i)).join(''):'<div class="empty spacious"><b>모든 거래의 분류가 완료됐습니다.</b><p>다음 뱅크샐러드 파일을 가져오면 새 검토 항목이 나타납니다.</p></div>')+'</div>'+
  (list.length>35?'<div class="pager"><button class="btn" data-review-page="prev" '+(reviewOffset===0?'disabled':'')+'>이전</button><span>'+(reviewOffset+1)+'–'+Math.min(reviewOffset+35,list.length)+' / '+list.length+'</span><button class="btn" data-review-page="next" '+(reviewOffset+35>=list.length?'disabled':'')+'>다음</button></div>':'');
 }
+
+const SHEET_CATS={
+ fixed:{
+  '담배 발주':['KT&G','말보로','메비우스','던힐'],
+  '발주':['쿠팡','지마켓','네이버','상온','주류','미스터파크','기타'],
+  '가게':['임대료','전기료','통신료','보안업체','가맹비','점소모품','스포츠 토토','기타'],
+  '집':['월세','전기료','통신료','수도세','가스요금'],
+  '보험':['KB암보험','KB주가지수','메리츠','삼성화재','KB7년의약속','기타'],
+  '건보/연금':['국민연금','건강보험'],
+  '세금':['부가가치세','종합소득세','지방세','세무사 기장료'],
+  '월정액':['11번가','쿠팡','지마켓','네이버','기타'],
+  '기타':['카드연회비','가족회비','기타']
+ },
+ consumption:{
+  '편의점':[],'식재료':[],'외식/배달':[],'병원/약국':[],'건강/미용':[],
+  '쇼핑':['온라인','오프라인'],'온라인쇼핑':[],'여행':[],'교통비':[],'풍월관':[],'기타':[]
+ }
+};
+const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note'];
+const SHEET_TITLES={date:'날짜',amount:'금액 (원)',scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',merchant:'거래처',payment:'결제수단',note:'메모'};
+const sheetData={rows:[],date:now(),limit:200};
+const sheetNewRow=()=>({date:sheetData.date,amount:'',scope:'personal',scopeManual:false,ledgerType:'consumption',category:'',subcategory:'',merchant:'',payment:'',note:''});
+const sheetOptions=(items,current)=>items.map(([val,label])=>'<option value="'+E(val)+'"'+(val===current?' selected':'')+'>'+E(label)+'</option>').join('');
+function sheetSelectOptions(field,row){
+ if(field==='scope')return sheetOptions([['personal','개인'],['business','편의점'],['windmoon','풍월관'],['review','미분류']],row.scope);
+ if(field==='ledgerType')return sheetOptions([['consumption','소비지출'],['fixed','고정지출']],row.ledgerType);
+ if(field==='category')return sheetOptions([['','대분류 선택'],...Object.keys(SHEET_CATS[row.ledgerType]||{}).map(c=>[c,c])],row.category);
+ return sheetOptions([['','소분류 선택 (선택)'],...(SHEET_CATS[row.ledgerType]?.[row.category]||[]).map(c=>[c,c])],row.subcategory);
+}
+function sheetCell(field,row,index){
+ const v=String(row[field]??''),attrs='data-sheet-field="'+field+'" data-sheet-index="'+index+'" aria-label="'+(index+1)+'행 '+SHEET_TITLES[field]+'"';
+ if(['scope','ledgerType','category'].includes(field))return '<select '+attrs+'>'+sheetSelectOptions(field,row)+'</select>';
+ if(field==='subcategory')return '<input '+attrs+' type="text" list="sheet-sub-'+index+'" placeholder="소분류 (선택)" value="'+E(v)+'"><datalist id="sheet-sub-'+index+'">'+
+   (SHEET_CATS[row.ledgerType]?.[row.category]||[]).map(x=>'<option value="'+E(x)+'"></option>').join('')+'</datalist>';
+ return '<input '+attrs+' type="'+(field==='date'?'date':'text')+'"'+(field==='amount'?' inputmode="numeric"':'')+
+   ' autocomplete="off" placeholder="'+(field==='merchant'?'거래처 입력':field==='amount'?'금액':field==='payment'?'카드·현금':'')+'" value="'+E(v)+'">';
+}
+function sheetRowMarkup(row,i){
+ return '<tr data-sheet-row="'+i+'"><th scope="row">'+(i+1)+'</th>'+
+   SHEET_FIELDS.map(field=>'<td data-sheet-col="'+field+'">'+sheetCell(field,row,i)+'</td>').join('')+
+   '<td><button type="button" class="row-edit" data-sheet-delete="'+i+'" aria-label="'+(i+1)+'행 삭제">×</button></td></tr>';
+}
+function sheetPage(){
+ if(!sheetData.rows.length)sheetData.rows=Array.from({length:10},sheetNewRow);
+ return pageIntro('SHEET INPUT','시트형 일괄 입력','기존 엑셀형 입력창을 복구했습니다. 현금 발주·사업비 등 직접 기록할 지출을 여러 행에 작성하고 한 번에 저장합니다.')+
+ '<section class="surface sheet-entry"><div class="surface-head"><div><h2>지출 일괄 입력</h2><p>Enter·Tab·방향키로 셀 이동 · Excel에서 여러 칸 복사/붙여넣기 · 대분류에 따른 소분류 추천</p></div>'+
+ '<label class="sheet-date-label">기본 날짜 <input id="sheet-default-date" type="date" value="'+E(sheetData.date)+'"></label></div>'+
+ '<div class="sheet-entry-scroll" id="sheet-entry-scroll"><table class="sheet-entry-table" id="sheet-entry-table"><thead><tr><th>#</th>'+
+ SHEET_FIELDS.map(f=>'<th>'+SHEET_TITLES[f]+'</th>').join('')+'<th>삭제</th></tr></thead><tbody>'+
+ sheetData.rows.map(sheetRowMarkup).join('')+'</tbody></table></div>'+
+ '<div class="sheet-toolbar"><div class="sheet-toolbar-left"><button class="btn" type="button" id="sheet-add-5">＋ 5행</button>'+
+ '<button class="btn" type="button" id="sheet-add-20">＋ 20행</button><button class="btn subtle" type="button" id="sheet-remove-empty">빈 행 정리</button></div>'+
+ '<span id="sheet-row-counter">'+sheetData.rows.filter(x=>String(x.amount).trim()).length+'건 입력 중</span>'+
+ '<button class="btn primary" type="button" id="sheet-submit">✓ 작성된 거래 저장</button></div></section>'+
+ '<div class="notice"><b>중복 및 수입 처리</b><p>등록 전에 같은 날짜·금액·거래처의 기존 거래를 확인합니다. 편의점 월매출과 토토 확정 수수료는 각각 별도 POS 입력 화면에서 기록하며 이 표에서는 지출만 입력합니다.</p></div>';
+}
+function readSheetCells(){
+ const table=$('#sheet-entry-table');if(!table)return;
+ const rows=$('tbody tr',table);
+ sheetData.rows=rows.map((tr,index)=>{
+   const out={scopeManual:!!sheetData.rows[index]?.scopeManual};
+   for(const f of SHEET_FIELDS)out[f]=tr.querySelector('[data-sheet-field="'+f+'"]')?.value??'';
+   return out;
+ });
+}
+function rerenderSheet(focusIndex,focusField){
+ const scroll=$('#sheet-entry-scroll'),top=scroll?.scrollTop,left=scroll?.scrollLeft;
+ render();
+ const next=$('[data-sheet-index="'+focusIndex+'"][data-sheet-field="'+focusField+'"]');
+ if(scroll){const nowScroll=$('#sheet-entry-scroll');nowScroll.scrollTop=top;nowScroll.scrollLeft=left}
+ next?.focus();
+}
+function sheetRowFromInput(row,i){
+ const content=SHEET_FIELDS.some(k=>!['date','scope','ledgerType'].includes(k)&&String(row[k]||'').trim());
+ if(!content)return null;
+ const date=String(row.date||'').trim(),amount=numInput(row.amount),scope=String(row.scope||''),type=String(row.ledgerType||''),
+  category=String(row.category||'').trim(),merchant=String(row.merchant||'').trim();
+ const fail=msg=>{throw Error((i+1)+'행: '+msg)};
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<'2026-01-01'||Number.isNaN(Date.parse(date+'T00:00:00Z')))fail('올바른 날짜를 입력하세요');
+ if(!Number.isSafeInteger(amount)||amount<=0)fail('금액은 0보다 커야 합니다');
+ if(!['personal','business','windmoon','review'].includes(scope))fail('사용처를 선택하세요');
+ if(!['consumption','fixed'].includes(type))fail('지출 종류를 선택하세요');
+ if(!category)fail('대분류를 선택하세요');
+ if(!merchant)fail('거래처를 입력하세요');
+ const value={id:'manual-sheet-'+uid(),date,time:'',amount,direction:'expense',scope,ledgerType:type,
+  category,subcategory:String(row.subcategory||'').trim(),merchant,payment:String(row.payment||'').trim(),
+  note:String(row.note||'').trim(),status:scope==='review'?'review':'confirmed',manual:true,
+  source:'manual',sourceSheet:'시트형 직접 입력',bankKey:''};
+ return value;
+}
+function submitSheet(){
+ readSheetCells();
+ let candidates;
+ try{candidates=sheetData.rows.map(sheetRowFromInput).filter(Boolean)}
+ catch(e){toast(e.message);return}
+ if(!candidates.length){toast('작성한 거래가 없습니다.');return}
+ const repeated=candidates.filter((x,i)=>candidates.some((y,j)=>i!==j&&x.date===y.date&&x.amount===y.amount&&G.normalizeMerchant(x.merchant)===G.normalizeMerchant(y.merchant)));
+ const existing=candidates.filter(x=>state.records.some(y=>y.direction==='expense'&&y.status!=='excluded'&&y.date===x.date&&y.amount===x.amount&&G.normalizeMerchant(y.merchant)===G.normalizeMerchant(x.merchant)));
+ const dupCount=new Set([...repeated,...existing].map(x=>x.id)).size;
+ const message=candidates.length+'건 ('+won(sum(candidates))+')을 저장할까요?'+
+ (dupCount?'\n주의: 날짜·금액·거래처가 같은 중복 의심 '+dupCount+'건이 있습니다.':'');
+ if(!confirm(message))return;
+ const count=state.records.length;state.records.push(...candidates);
+ if(!save()){state.records.length=count;return}
+ sheetData.rows=Array.from({length:10},sheetNewRow);
+ render();toast(candidates.length+'건을 시트에서 저장했습니다.');
+}
+function pasteSheetGrid(e){
+ const el=e.target.closest?.('[data-sheet-field]');if(!el)return;
+ const raw=e.clipboardData?.getData('text/plain')||'';
+ if(!raw.includes('\t')&&!raw.includes('\n'))return;
+ const rows=raw.replace(/\r/g,'').replace(/\n$/,'').split('\n').map(line=>line.split('\t'));
+ if(!rows.length)return;
+ e.preventDefault();readSheetCells();
+ const startIndex=Number(el.dataset.sheetIndex),startCol=SHEET_FIELDS.indexOf(el.dataset.sheetField);
+ if(startCol<0)return;
+ const need=startIndex+rows.length;
+ if(need>sheetData.limit){toast('한 번에 최대 '+sheetData.limit+'행까지 입력할 수 있습니다.');return}
+ while(sheetData.rows.length<need)sheetData.rows.push(sheetNewRow());
+ for(let i=0;i<rows.length;i++)for(let j=0;j<rows[i].length;j++){
+   const f=SHEET_FIELDS[startCol+j];if(!f)break;
+   const v=rows[i][j];
+   const entry=sheetData.rows[startIndex+i];
+   if(f==='scope'&&!['personal','business','windmoon','review'].includes(v))continue;
+   if(f==='ledgerType'&&!['fixed','consumption'].includes(v))continue;
+   if(f==='category'&&!Object.keys(SHEET_CATS[entry.ledgerType]||{}).includes(v))continue;
+   entry[f]=v;
+ }
+ rerenderSheet(startIndex,el.dataset.sheetField);
+}
+function sheetMove(e){
+ const el=e.target.closest?.('[data-sheet-field]');if(!el||e.isComposing||e.keyCode===229)return false;
+ const key=e.key;
+ if(!['Enter','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key))return false;
+ if(key.startsWith('Arrow')&&!['SELECT'].includes(el.tagName)){
+   if((key==='ArrowLeft'&&el.selectionStart>0)||(key==='ArrowRight'&&el.selectionStart<el.value.length))return false;
+ }
+ // Native selects keep Up/Down for changing choices; Enter/Tab advance cells.
+ if(el.tagName==='SELECT'&&key.startsWith('Arrow'))return false;
+ const i=Number(el.dataset.sheetIndex),col=SHEET_FIELDS.indexOf(el.dataset.sheetField);
+ let nextRow=i,nextCol=col;
+ if(key==='Enter'||key==='ArrowDown')nextRow++;
+ else if(key==='ArrowUp')nextRow--;
+ else if(key==='Tab')nextCol+=e.shiftKey?-1:1;
+ else if(key==='ArrowLeft')nextCol--;
+ else if(key==='ArrowRight')nextCol++;
+ if(nextCol>=SHEET_FIELDS.length){nextCol=0;nextRow++}
+ if(nextCol<0){nextCol=SHEET_FIELDS.length-1;nextRow--}
+ if(nextRow<0)return false;
+ e.preventDefault();
+ readSheetCells();
+ if(nextRow>=sheetData.limit)return true;
+ if(nextRow>=sheetData.rows.length){
+   sheetData.rows.push(sheetNewRow());rerenderSheet(nextRow,SHEET_FIELDS[nextCol]);return true;
+ }
+ const next=$('[data-sheet-index="'+nextRow+'"][data-sheet-field="'+SHEET_FIELDS[nextCol]+'"]');next?.focus();next?.select?.();
+ return true;
+}
+function sheetSelectChange(el){
+ const tr=el.closest('tr');if(!tr)return;
+ if(el.dataset.sheetField==='ledgerType'){
+   const cat=tr.querySelector('[data-sheet-field="category"]'),sub=tr.querySelector('[data-sheet-field="subcategory"]');
+   if(cat){cat.innerHTML=sheetSelectOptions('category',{ledgerType:el.value,category:''});cat.value=''}
+   if(sub){sub.value='';const list=tr.querySelector('datalist');if(list)list.innerHTML=''}
+ }else if(el.dataset.sheetField==='category'){
+   const sub=tr.querySelector('[data-sheet-field="subcategory"]');
+   if(sub){sub.value='';const list=tr.querySelector('datalist');if(list)list.innerHTML=(SHEET_CATS[tr.querySelector('[data-sheet-field="ledgerType"]').value]?.[el.value]||[]).map(v=>'<option value="'+E(v)+'"></option>').join('')}
+ }
+ // Do not overwrite a manually selected owner; only infer when owner is still default.
+ const category=tr.querySelector('[data-sheet-field="category"]')?.value||'',
+       scope=tr.querySelector('[data-sheet-field="scope"]');
+ if(scope&&!sheetData.rows[Number(el.dataset.sheetIndex)]?.scopeManual&&el.dataset.sheetField==='category'){
+   const nextScope=['발주','담배 발주','가게'].includes(category)?'business':category==='풍월관'?'windmoon':'personal';
+   scope.value=nextScope;
+ }
+}
+
 function recordsPage(){
  const entries=filtered(state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded')).sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time));
  return pageIntro('TRANSACTIONS','전체 거래내역','은행에서 가져온 거래와 원본 시트의 현금 지출을 함께 관리합니다. 원본 출처와 거래처 정보를 보존합니다.',
@@ -422,7 +599,7 @@ function render(){
  $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.status==='review'&&x.direction==='expense').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
- container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
  $('#sidebar').classList.remove('open');
  setStatus('이 브라우저에 저장됨');
 }
@@ -675,6 +852,16 @@ function onClick(event){
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
+ if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
+   readSheetCells();const count=target.id==='sheet-add-5'?5:20;
+   for(let i=0;i<count&&sheetData.rows.length<sheetData.limit;i++)sheetData.rows.push(sheetNewRow());render();return
+ }
+ if(target.id==='sheet-remove-empty'){
+   readSheetCells();sheetData.rows=sheetData.rows.filter(x=>SHEET_FIELDS.some(f=>!['date','scope','ledgerType'].includes(f)&&String(x[f]||'').trim()));
+   while(sheetData.rows.length<5)sheetData.rows.push(sheetNewRow());render();return
+ }
+ if(target.id==='sheet-submit'){submitSheet();return}
+ if(target.dataset.sheetDelete!==undefined){readSheetCells();sheetData.rows.splice(Number(target.dataset.sheetDelete),1);if(!sheetData.rows.length)sheetData.rows.push(sheetNewRow());render();return}
  if(target.dataset.salesSelect){salesMonth=target.dataset.salesSelect;lottoMonth=salesMonth;render();return}
  if(target.id==='confirm-lotto'){confirmLotto();return}
  if(target.id==='new-record'){editRecord();return}
@@ -699,6 +886,11 @@ function onClick(event){
 }
 function onChange(e){
  const el=e.target;
+ if(el.id==='sheet-default-date'){if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){
+   readSheetCells();const old=sheetData.date;sheetData.date=el.value;
+   sheetData.rows.forEach(x=>{if(x.date===old)x.date=sheetData.date});render();
+ }return}
+ if(el.dataset.sheetField){const row=sheetData.rows[Number(el.dataset.sheetIndex)];if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}sheetSelectChange(el);return}
  if(el.id==='sales-month'){if(isMonth(el.value)){salesMonth=el.value;render()}return}
  if(el.id==='lotto-month'){if(isMonth(el.value)){lottoMonth=el.value;render()}return}
  if(el.id==='lotto-rate'){
@@ -719,6 +911,7 @@ function init(){
  document.addEventListener('change',onChange);
  document.addEventListener('input',e=>{
    if(e.target.id==='query-filter')onChange(e);
+   if(e.target.dataset?.sheetField){const row=sheetData.rows[Number(e.target.dataset.sheetIndex)];if(row)row[e.target.dataset.sheetField]=e.target.value;}
    const form=e.target.closest?.('.sales-form[data-sale-type="store"]');
    if(form&&['amount','netProfit'].includes(e.target.name)){
      const gross=numInput(form.querySelector('[name="amount"]').value);
@@ -736,8 +929,9 @@ function init(){
    if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}
    if(e.target.id==='lotto-daily-form'){e.preventDefault();saveLottoDaily(e.target)}
  });
- document.addEventListener('submit',e=>{if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}});
+ document.addEventListener('paste',pasteSheetGrid);
  document.addEventListener('keydown',e=>{
+   if(sheetMove(e))return;
    if(e.key==='Escape'){$('#sidebar').classList.remove('open')}
    if(page==='review'&&!$('#editor').open&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')){
      const row=$('.review-card');const id=row?.dataset.reviewId;
