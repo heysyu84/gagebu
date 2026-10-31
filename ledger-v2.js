@@ -11,6 +11,14 @@ const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'시�
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
+/* Actual payment funding is distinct from the BankSalad registered card display.
+   Onnuri is a prepaid balance: its top-ups are excluded, usage is a single expense. */
+const isOnnuri=x=>x.onnuri===true||(!('onnuri' in x)&&/온누리/.test(String(x.payment||'')));
+const paymentLabel=x=>isOnnuri(x)?'온누리상품권':String(x.payment||'—');
+const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(String(x.payment||''))?'':x.payment)||''):'';
+const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
+  '<span>온누리상품권으로 결제</span></label>';
+
 const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
@@ -30,7 +38,7 @@ function migrateLegacy(data){
   direction:x.kind==='income'?'income':x.kind==='transfer'?'transfer':'expense',
   scope:ledgerScope(x),ledgerType:x.sourceSheet==='고정지출'?'fixed':x.sourceSheet==='소비지출'?'consumption':'',
   category:String(x.category||''),subcategory:String(x.subcategory||''),
-  merchant:String(x.merchant||''),payment:String(x.payment||''),note:String(x.note||''),
+  merchant:String(x.merchant||''),payment:String(x.payment||''),onnuri:/온누리/.test(String(x.payment||'')),note:String(x.note||''),
   source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),sourceRow:x.sourceRow??null,
   originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
@@ -156,7 +164,9 @@ function transactionTable(items,compact=false){
  return '<div class="table-scroll"><table class="records-table"><thead><tr><th>날짜 · 시간</th><th>거래처</th><th>결제 수단</th><th>분류</th><th class="right">금액</th><th>관리</th></tr></thead><tbody>'+
  (items.length?items.map(x=>'<tr><td class="date-col">'+E(x.date)+'<small>'+E(x.time||'')+'</small></td>'+
  '<td class="merchant-col"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><small>'+E((x.source==='bank'?'뱅크샐러드':x.sourceSheet||SOURCE[x.source]||'직접 입력'))+'</small></td>'+
- '<td class="payment-col">'+E(x.payment||'—')+'</td>'+
+ '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
+  (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
+  (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
  '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small></td>'+
  '<td class="right amount-col">−'+won(x.amount)+'</td><td><button class="row-edit" data-edit="'+E(x.id)+'">수정</button></td></tr>').join(''):
  '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
@@ -165,7 +175,9 @@ function reviewCard(x,i){
  const online=x.category==='온라인쇼핑'||/온라인 쇼핑/.test(x.reason||'');
  const suggest=x.matchCandidate?'<span class="match-flag">원장에 유사한 거래가 있습니다 · 중복 확인 필요</span>':'';
  return '<article class="review-card" data-review-id="'+E(x.id)+'"><div class="review-index">'+String(i+1).padStart(2,'0')+'</div><div class="review-main"><div class="review-top"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><span>−'+won(x.amount)+'</span></div>'+
- '<div class="review-metadata">'+E(x.date)+' · '+E(x.payment||'결제수단 미상')+' · '+E([x.bankMajor,x.bankMinor].filter(Boolean).join(' / '))+'</div>'+
+ '<div class="review-metadata">'+E(x.date)+' · '+E(paymentLabel(x))+
+  (registeredCard(x)?' (등록 카드: '+E(registeredCard(x))+')':'')+
+  ' · '+E([x.bankMajor,x.bankMinor].filter(Boolean).join(' / '))+'</div>'+onnuriCheckbox(x,'review')+
  '<p class="review-reason">'+E(x.reason||'분류 확인 필요')+'</p>'+suggest+
  '<div class="review-choices"><button data-scope="personal" data-id="'+E(x.id)+'" class="choice personal"><b>1</b> 개인 소비</button>'+
  '<button data-scope="business" data-id="'+E(x.id)+'" class="choice business"><b>2</b> 편의점 매입</button>'+
@@ -700,7 +712,7 @@ async function processBank(file,range=bankImportRange){
      continue;
    }
    const item={
-     id:'bank-'+key,bankKey:key,source:'bank',sourceSheet:'뱅크샐러드',
+     id:'bank-'+key,bankKey:key,source:'bank',sourceSheet:'뱅크샐러드',onnuri:false,
      direction:'expense',date:row.date,time:row.time,amount:money(row.amount),
      merchant:row.merchant||'거래처 미기재',payment:row.payment,note:row.memo||'',
      bankMajor:row.major,bankMinor:row.minor,
@@ -733,6 +745,7 @@ function commitBank(){
  for(const link of preview.links){
    const x=map.get(link.id);if(!x)continue;
    x.bankKey=link.bankKey;
+   if(/온누리/.test(String(x.payment||'')))x.onnuri=true;
    if(!x.merchant)x.merchant=link.merchant||'';
    if(!x.bankPayment)x.bankPayment=link.payment||'';
    if(link.reviewConflict){x.scope='review';x.status='review';x.reason='기존 시트 분류와 금융 거래의 지역 규칙이 달라 확인 필요'}
@@ -804,6 +817,7 @@ async function importLegacy(file){
    original.bankKey=match.bankKey;
    if(!original.merchant)original.merchant=match.merchant;
    original.bankPayment=match.payment;
+   if(/온누리/.test(String(original.payment||'')))original.onnuri=true;
    if(((original.category==='집'&&original.subcategory==='월세')||(original.category==='가게'&&original.subcategory==='임대료'))&&match.merchant){
      state.rentRecipients=state.rentRecipients||{};
      state.rentRecipients[G.normalizeMerchant(match.merchant)]={amount:original.amount,scope:original.scope,category:original.category,subcategory:original.subcategory};
@@ -827,8 +841,8 @@ function download(name,contents,type){
 }
 function exportJSON(){download('가게부_V2_개인백업_'+now()+'.json',JSON.stringify(state,null,2),'application/json;charset=utf-8')}
 function exportCSV(){
- const headers=['날짜','시간','거래처','결제수단','금액','사용처','지출종류','대분류','소분류','상태','원본','메모'];
- const rows=state.records.filter(x=>x.direction==='expense').map(x=>[x.date,x.time,x.merchant,x.payment,x.amount,LABEL[x.scope]||x.scope,GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note]);
+ const headers=['날짜','시간','거래처','실제 결제수단','뱅샐 등록 카드·원본 결제수단','온누리 사용','금액','사용처','지출종류','대분류','소분류','상태','원본','메모'];
+ const rows=state.records.filter(x=>x.direction==='expense').map(x=>[x.date,x.time,x.merchant,paymentLabel(x),x.bankPayment||x.payment||'',isOnnuri(x)?'예':'아니오',x.amount,LABEL[x.scope]||x.scope,GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note]);
  const enc=x=>'"'+String(x??'').replaceAll('"','""')+'"';
  download('가게부_V2_거래내역_'+now()+'.csv','\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n'),'text/csv;charset=utf-8');
 }
@@ -842,6 +856,8 @@ function editRecord(id){
  f.elements.amount.value=r?.amount??'';
  f.elements.merchant.value=r?.merchant||'';
  f.elements.payment.value=r?.payment||'';
+ f.elements.onnuri.checked=r?isOnnuri(r):false;
+ const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:(r?.payment?'원본 결제수단: '+r.payment:'');
  f.elements.scope.value=r?.scope==='review'?'personal':r?.scope||'personal';
  f.elements.ledgerType.value=r?.ledgerType||'consumption';
  f.elements.category.value=r?.category||'';
@@ -854,7 +870,7 @@ function submitEditor(f){
  const merchant=String(data.get('merchant')||'').trim();
  if(!data.get('date')||!(amt>0)||!merchant){toast('날짜·금액·거래처를 입력하세요.');return}
  const scope=String(data.get('scope')),ledgerType=String(data.get('ledgerType')),category=String(data.get('category')||'').trim();
- const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),note:String(data.get('note')||''),scope,ledgerType,category:category||(scope==='windmoon'?'풍월관':'기타'),subcategory:String(data.get('subcategory')||''),status:'confirmed',manual:true};
+ const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),onnuri:data.has('onnuri'),note:String(data.get('note')||''),scope,ledgerType,category:category||(scope==='windmoon'?'풍월관':'기타'),subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true};
  if(editing&&editing!=='new'){const row=state.records.find(x=>x.id===editing);if(row)Object.assign(row,entry)}
  else state.records.push({...entry,id:'manual-'+uid(),direction:'expense',source:'manual',sourceSheet:'직접 입력',time:'',bankKey:''});
  $('#editor').close();save();render();toast('거래를 저장했습니다.');
@@ -898,6 +914,14 @@ function onClick(event){
 }
 function onChange(e){
  const el=e.target;
+ if(el.dataset.onnuriId){
+   const x=state.records.find(r=>r.id===el.dataset.onnuriId);
+   if(!x||x.direction!=='expense')return;
+   const was=x.onnuri;x.onnuri=!!el.checked;
+   if(!save()){x.onnuri=was;return}
+   render();toast(x.onnuri?'온누리상품권 결제로 표시했습니다.':'원본 결제수단 표시로 변경했습니다.');
+   return;
+ }
  if(el.id==='sheet-default-date'){if(/^\d{4}-\d{2}-\d{2}$/.test(el.value)){
    readSheetCells();const old=sheetData.date;sheetData.date=el.value;
    sheetData.rows.forEach(x=>{if(x.date===old)x.date=sheetData.date});render();
