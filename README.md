@@ -38,7 +38,7 @@ npx wrangler deploy
 
 `ADMIN_PASSWORD`는 **길고 고유한 관리자 비밀번호**, `SESSION_PEPPER`는 **별도의 랜덤 문자열**을 입력합니다. 둘 다 GitHub, 브라우저 코드, JSON 파일에 적지 마세요. `wrangler.toml`의 `ALLOWED_ORIGINS`는 접속 사이트가 바뀌는 경우에만 수정하세요.
 
-Worker가 게시되면 가게부의 `데이터 관리 → 서버 저장`에 `https://....workers.dev` 주소와 관리자 비밀번호를 입력해 로그인합니다. 처음에는 **JSON 백업을 먼저 보관한 후** 기존 장부를 한 번만 서버에 올립니다. 다른 기기에서도 같은 Worker 주소로 로그인하면 서버 기록을 불러옵니다.
+최초 데이터를 파일 업로드 없이 서버에 이관하려면, 별도로 전달받은 **비공개 초기 적재 SQL**을 `db/schema.sql` 적용 뒤 한 번만 실행할 수도 있습니다. 비공개 SQL은 **GitHub에 올리지 마세요**.\n\n```bash\nnpx wrangler d1 execute store-ledger-private --remote --file=store-ledger-private-initial-seed.sql\n```\n\nWorker가 게시되면 가게부의 `데이터 관리 → 서버 저장`에 `https://....workers.dev` 주소와 관리자 비밀번호를 입력해 로그인합니다. 처음에는 **JSON 백업을 먼저 보관한 후** 기존 장부를 한 번만 서버에 올립니다. 다른 기기에서도 같은 Worker 주소로 로그인하면 서버 기록을 불러옵니다.
 
 ### 데이터 보존 안전장치
 
