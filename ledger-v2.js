@@ -19,7 +19,7 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -139,6 +139,7 @@ function load(){
  // otherwise the next reload could mistakenly restore a deliberately hidden item.
  if(state.bankSaladBaselineVersion!==2){adoptBankSaladDefaults();save()}
  if(state.fixedPurchasePresetVersion!==1){trimUnusedPurchasePresets();save()}
+ if(state.consumptionOnlinePresetVersion!==1){trimUnusedConsumptionOnlinePresets();save()}
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
@@ -246,7 +247,7 @@ const SHEET_CATS={
  consumption:{
   // 13 BankSalad major groups with owner-defined simpler food/online subgroups.
   // '풍월관' is a local ownership marker, retained for Windmoon expense records.
-  '온라인쇼핑':['쿠팡','지마켓','알리','11번가','네이버','옥션','SSG','롯데온','컬리','테무','오늘의집','무신사','인터파크','위메프','티몬','아이허브','29CM','구매처 미확인','풍월관'],
+  '온라인쇼핑':['쿠팡','지마켓','알리','11번가','네이버','구매처 미확인','풍월관'],
   '생활':['편의점','마트','미분류','생필품','생활서비스','목욕','가구/가전','풍월관'],
   '식비':['외식','배달','풍월관'],
   '문화/여가':['스포츠','전시/관람','미분류','풍월관'],
@@ -392,6 +393,35 @@ function trimUnusedPurchasePresets(){
    tax.fixed[major]=subs.filter(x=>!UNUSED_FIXED_PURCHASE_PRESETS.includes(x)||inUse.has(x));
  }
  state.fixedPurchasePresetVersion=1;
+ return true;
+}
+
+
+/* The user's 2026 sheet identifies 11번가 and 알리바바 in spending notes;
+   쿠팡/지마켓/네이버 are also present in the working store order categories.
+   Most legacy '쇼핑' rows omit the merchant, so remove only unsupported
+   built-in marketplace suggestions, not historical or custom user entries.
+   As new banksalad data is imported, missing merchants remain manually addable. */
+const UNUSED_CONSUMPTION_ONLINE_PRESETS=[
+ '옥션','SSG','롯데온','컬리','테무','오늘의집','무신사',
+ '인터파크','위메프','티몬','아이허브','29CM'
+];
+function trimUnusedConsumptionOnlinePresets(){
+ if(state.consumptionOnlinePresetVersion===1)return false;
+ const tax=taxonomy(),major=canonicalCategory('consumption','온라인쇼핑','').category||'온라인쇼핑';
+ const subs=tax.consumption?.[major];
+ if(Array.isArray(subs)){
+   const used=new Set(
+     [...state.records,...sheetData.rows].filter(x=>
+       x.direction==='expense'&&x.ledgerType==='consumption'&&x.category===major
+     ).map(x=>x.subcategory).filter(Boolean)
+   );
+   for(const rule of Object.values(state.customRules||{})){
+     if(rule.ledgerType==='consumption'&&rule.category===major&&rule.subcategory)used.add(rule.subcategory);
+   }
+   tax.consumption[major]=subs.filter(x=>!UNUSED_CONSUMPTION_ONLINE_PRESETS.includes(x)||used.has(x));
+ }
+ state.consumptionOnlinePresetVersion=1;
  return true;
 }
 
