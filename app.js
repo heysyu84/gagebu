@@ -449,10 +449,10 @@
     const el=e.target;
     if(el.id==='sheet-kind'){if(getSheetCells().some(x=>x.amount.trim())&&!confirm('입력 종류를 바꾸면 작성 중인 값이 초기화됩니다. 계속할까요?')){el.value=sheetKind;return}sheetKind=el.value;render();return}
     if(el.id==='sheet-date'){sheetDate=el.value;return}
-    if(el.id==='lotto-batch-month'){if([...document.querySelectorAll('#lotto-batch-grid [data-grid]')].some(x=>x.value!==x.defaultValue)&&!confirm('입력 월을 바꾸면 작성 중인 값이 초기화됩니다. 계속할까요?')){el.value=lottoEntryMonth;return}lottoEntryMonth=el.value;render();return}
+    if(el.id==='lotto-batch-month'){if([...document.querySelectorAll('#lotto-batch-grid [data-grid]')].some(x=>x.value!==x.defaultValue)&&!confirm('입력 월을 바꾸면 작성 중인 값이 초기화됩니다. 계속할까요?')){el.value=lottoEntryMonth;return}lottoEntryMonth=el.value;period=lottoEntryMonth;render();return}
     if(el.dataset.grid==='sheet'&&el.dataset.col==='category'){fillSubChoices(Number(el.dataset.row));return}
     if(el.dataset.grid==='sheet'&&el.dataset.col==='area'){el.dataset.manual='1';return}
-    if(el.id==='period-select'){period=el.value;ledgerOffset=0;lottoOffset=0;render();return}
+    if(el.id==='period-select'){period=el.value;if(page==='lotto'&&period!=='all')lottoEntryMonth=period;ledgerOffset=0;lottoOffset=0;render();return}
     if(el.id==='import-file'){importJSON(el.files?.[0]);return}
     if(el.id==='f-query'){filters.query=el.value;ledgerOffset=0;render();return}
     if(el.id==='f-area'){filters.area=el.value;ledgerOffset=0;render();return}
