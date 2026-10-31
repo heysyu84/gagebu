@@ -59,6 +59,10 @@ function classify(row,customRules={}){
  // Transfers to known fixed payees are real rent expenses. Other personal transfers are
  // omitted from spending, because most are toto prize settlements rather than expenses.
  if(type==='이체'){
+   // Clearly identifiable business/tax recipients are not ordinary person-to-person transfers.
+   // Do not auto-book these as expenses without a source-ledger match or manual review.
+   if(/(?:세무법인|KTNG|KT&G|국세|한국전력|공공요금|주식회사|\(주\)|지방세|구청)/i.test(m))
+     return review('법인·세금 관련 송금: 지출 여부와 사용처 확인',m,row.major,row.minor);
    return skip('개인 간 송금·계좌이체는 토토 정산 또는 자산이동 가능성이 높아 제외. 기존 시트의 월세·임대료는 따로 일치 확인');
  }
  if(type!=='지출')return skip('지출 유형이 아닌 거래');
