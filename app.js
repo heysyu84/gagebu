@@ -33,9 +33,22 @@
   };
   const labelArea = x => ({business:'편의점',personal:'개인',review:'확인 필요',transfer:'저축/이체'})[x]||'미지정';
   const labelKind = x => ({income:'수입',expense:'지출',transfer:'이체'})[x]||x;
+
+  // Original '고정지출' is a ledger source, not necessarily a recurring cost.
+  const FIXED_LEDGER_CATS=new Set(['담배 발주','발주','가게','집','보험','건보/연금','세금','저축','월정액']);
+  const inferExpenseGroup=cat=>FIXED_LEDGER_CATS.has(String(cat||'').trim())?'fixed':'consumption';
+  const expenseGroupOf=x=>{
+    if(x.kind!=='expense')return '';
+    if(x.expenseGroup==='fixed'||x.expenseGroup==='consumption')return x.expenseGroup;
+    if(x.sourceSheet==='고정지출')return 'fixed';
+    if(x.sourceSheet==='소비지출')return 'consumption';
+    return inferExpenseGroup(x.category);
+  };
+  const labelExpenseGroup=x=>expenseGroupOf(x)==='fixed'?'고정지출':expenseGroupOf(x)==='consumption'?'소비지출':'—';
+  const groupControl=(value,kind)=>'<div class="form-group" id="tx-expense-group-wrap"'+(kind==='expense'?'':' hidden')+'><label for="tx-expense-group">지출 종류</label><select id="tx-expense-group" name="expenseGroup">'+[['fixed','고정지출'],['consumption','소비지출']].map(([v,n])=>'<option value="'+v+'"'+(v===value?' selected':'')+'>'+n+'</option>').join('')+'</select></div>';
   const amountText = x => (x.kind==='income'?'+':x.kind==='expense'?'-':'↗') + fmt(x.amount);
   const sum = (arr,fn=x=>x.amount) => arr.reduce((a,b)=>a+(Number(fn(b))||0),0);
-  let db=empty(),page='dashboard',period='all',filters={query:'',area:'all',kind:'all',category:'all'},ledgerOffset=0,editId=null,lottoOffset=0;
+  let db=empty(),page='dashboard',period='all',filters={query:'',area:'all',kind:'all',expenseGroup:'all',category:'all'},ledgerOffset=0,editId=null,lottoOffset=0;
   let noticeTimer=null;let searchTimer=null;
   let lastView='dashboard';
   let sheetKind='expense',sheetDate=ymd(),lottoEntryMonth=ymd().slice(0,7);
@@ -145,8 +158,8 @@
   };
   const fmtSigned=n=>`<span class="${n<0?'neg':'pos'}">${n<0?'−':'+'}${won(Math.abs(n))}</span>`;
   const kpi=(title,n,foot,icon,negative=false)=>`<div class="stat"><div class="stat-label">${title}<span class="stat-icon">${icon}</span></div><div class="stat-value ${n<0||negative?'neg':''}">${won(n)}</div><div class="stat-foot">${foot}</div></div>`;
-  const ledgerRows=(rows,compact=false)=>rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${tag(x.area,x.kind)}</td><td>${esc(x.category)}${x.subcategory?` <small class="small-muted">/ ${esc(x.subcategory)}</small>`:''}</td>${compact?'':`<td>${esc(x.payment||'—')}</td>`}<td class="memo" title="${esc(x.note)}">${esc(x.note||'—')}</td><td class="amount ${x.kind==='income'?'pos':''}">${amountText(x)}</td>${compact?'':`<td class="right"><div class="row-actions"><button class="btn-plain" data-edit="${esc(x.id)}" title="수정">수정</button><button class="btn-plain" data-delete="${esc(x.id)}" title="삭제">삭제</button></div></td>`}</tr>`).join('');
-  const basicTable=(items,compact=false)=>`<div class="data-table-wrap"><table class="data-table"><thead><tr><th>날짜</th><th>구분</th><th>분류</th>${compact?'':'<th>결제 수단</th>'}<th>메모</th><th style="text-align:right">금액</th>${compact?'':'<th style="text-align:right">관리</th>'}</tr></thead><tbody>${items.length?ledgerRows(items,compact):`<tr><td colspan="${compact?5:7}" class="empty">표시할 내역이 없습니다.</td></tr>`}</tbody></table></div>`;
+  const ledgerRows=(rows,compact=false)=>rows.map(x=>`<tr><td>${esc(x.date)}</td><td>${tag(x.area,x.kind)}</td>${compact?'':`<td><span class="chip">${esc(labelExpenseGroup(x))}</span></td>`}<td>${esc(x.category)}${x.subcategory?` <small class="small-muted">/ ${esc(x.subcategory)}</small>`:''}</td>${compact?'':`<td>${esc(x.payment||'—')}</td>`}<td class="memo" title="${esc(x.note)}">${esc(x.note||'—')}</td><td class="amount ${x.kind==='income'?'pos':''}">${amountText(x)}</td>${compact?'':`<td class="right"><div class="row-actions"><button class="btn-plain" data-edit="${esc(x.id)}" title="수정">수정</button><button class="btn-plain" data-delete="${esc(x.id)}" title="삭제">삭제</button></div></td>`}</tr>`).join('');
+  const basicTable=(items,compact=false)=>`<div class="data-table-wrap"><table class="data-table"><thead><tr><th>날짜</th><th>구분</th>${compact?'':'<th>지출 종류</th>'}<th>분류</th>${compact?'':'<th>결제 수단</th>'}<th>메모</th><th style="text-align:right">금액</th>${compact?'':'<th style="text-align:right">관리</th>'}</tr></thead><tbody>${items.length?ledgerRows(items,compact):`<tr><td colspan="${compact?5:8}" class="empty">표시할 내역이 없습니다.</td></tr>`}</tbody></table></div>`;
   const sorted=(items)=>[...items].sort((a,b)=>b.date.localeCompare(a.date)||String(b.id).localeCompare(String(a.id)));
   const dashboard=()=>{
     const t=current(),s=stat(t),rows=monthOverview();const biggest=Object.entries(t.filter(exp).reduce((a,x)=>{a[x.category]=(a[x.category]||0)+x.amount;return a},{})).sort((a,b)=>b[1]-a[1]).slice(0,6);const cap=Math.max(...biggest.map(x=>x[1]),1);
@@ -160,11 +173,11 @@
     `<div class="footer-note">※ 확정 수입은 월별 수입 시트 기준. 토토 일별 명세는 참고용으로 별도 보관하고 중복 합산하지 않습니다. 결제금액 기준 장부이므로 계좌 실잔고와 일치하는 장부는 아닙니다.</div>`;
   };
   const transactions=()=>{
-    let rows=current();if(filters.area!=='all')rows=rows.filter(x=>x.area===filters.area);if(filters.kind!=='all')rows=rows.filter(x=>x.kind===filters.kind);if(filters.category!=='all')rows=rows.filter(x=>x.category===filters.category);
+    let rows=current();if(filters.area!=='all')rows=rows.filter(x=>x.area===filters.area);if(filters.kind!=='all')rows=rows.filter(x=>x.kind===filters.kind);if(filters.expenseGroup!=='all')rows=rows.filter(x=>expenseGroupOf(x)===filters.expenseGroup);if(filters.category!=='all')rows=rows.filter(x=>x.category===filters.category);
     if(filters.query){const q=filters.query.toLocaleLowerCase();rows=rows.filter(x=>[x.date,x.category,x.subcategory,x.payment,x.note].some(y=>String(y||'').toLocaleLowerCase().includes(q)))}
     rows=sorted(rows);const shown=rows.slice(ledgerOffset,ledgerOffset+80);
     const cats=[...new Set(db.transactions.map(x=>x.category))].filter(Boolean).sort((a,b)=>a.localeCompare(b,'ko'));
-    return intro('TRANSACTIONS','거래내역','기존 1,072건의 원본 출처를 보존하면서 새로운 거래를 추가·수정할 수 있습니다.',periodSelect()+`<button class="btn btn-soft" id="csv-export">↓ CSV 추출</button>`)+sourceBanner()+`<section class="panel"><div class="table-tools"><input id="f-query" class="search" value="${esc(filters.query)}" placeholder="메모·분류·결제수단 검색"><div class="page-controls"><select id="f-area" class="select"><option value="all">모든 구분</option>${['business','personal','review','transfer'].map(a=>`<option value="${a}" ${filters.area===a?'selected':''}>${labelArea(a)}</option>`).join('')}</select><select id="f-kind" class="select">${[['all','모든 유형'],['income','수입'],['expense','지출'],['transfer','이체']].map(([v,s])=>`<option value="${v}" ${filters.kind===v?'selected':''}>${s}</option>`).join('')}</select><select id="f-category" class="select"><option value="all">전체 분류</option>${cats.map(c=>`<option ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}</select></div></div><div class="split-summary"><div><span class="split-label">검색 거래</span><strong>${fmt(rows.length)}건</strong></div><div><span class="split-label">검색 지출</span><strong>${won(sum(rows.filter(exp)))}</strong></div><div><span class="split-label">검색 수입</span><strong>${won(sum(rows.filter(inc)))}</strong></div></div>${basicTable(shown)}<div class="pager"><span>${rows.length?ledgerOffset+1:0}–${Math.min(rows.length,ledgerOffset+80)} / ${rows.length}건</span><button class="btn btn-small" data-offset="prev" ${!ledgerOffset?'disabled':''}>이전</button><button class="btn btn-small" data-offset="next" ${ledgerOffset+80>=rows.length?'disabled':''}>다음</button></div></section>`;
+    return intro('TRANSACTIONS','거래내역','기존 1,072건의 원본 출처를 보존하면서 새로운 거래를 추가·수정할 수 있습니다.',periodSelect()+`<button class="btn btn-soft" id="csv-export">↓ CSV 추출</button>`)+sourceBanner()+`<section class="panel"><div class="table-tools"><input id="f-query" class="search" value="${esc(filters.query)}" placeholder="메모·분류·결제수단 검색"><div class="page-controls"><select id="f-area" class="select"><option value="all">모든 구분</option>${['business','personal','review','transfer'].map(a=>`<option value="${a}" ${filters.area===a?'selected':''}>${labelArea(a)}</option>`).join('')}</select><select id="f-kind" class="select">${[['all','모든 유형'],['income','수입'],['expense','지출'],['transfer','이체']].map(([v,s])=>`<option value="${v}" ${filters.kind===v?'selected':''}>${s}</option>`).join('')}</select><select id="f-expense-group" class="select"><option value="all">모든 지출 종류</option><option value="fixed" ${filters.expenseGroup==='fixed'?'selected':''}>고정지출</option><option value="consumption" ${filters.expenseGroup==='consumption'?'selected':''}>소비지출</option></select><select id="f-category" class="select"><option value="all">전체 분류</option>${cats.map(c=>`<option ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}</select></div></div><div class="split-summary"><div><span class="split-label">검색 거래</span><strong>${fmt(rows.length)}건</strong></div><div><span class="split-label">검색 지출</span><strong>${won(sum(rows.filter(exp)))}</strong></div><div><span class="split-label">검색 수입</span><strong>${won(sum(rows.filter(inc)))}</strong></div></div>${basicTable(shown)}<div class="pager"><span>${rows.length?ledgerOffset+1:0}–${Math.min(rows.length,ledgerOffset+80)} / ${rows.length}건</span><button class="btn btn-small" data-offset="prev" ${!ledgerOffset?'disabled':''}>이전</button><button class="btn btn-small" data-offset="next" ${ledgerOffset+80>=rows.length?'disabled':''}>다음</button></div></section>`;
   };
   const allCats=()=>[...new Set([...db.transactions.map(x=>x.category),...['가게 매출','토토 수수료','담배 발주','발주','가게','세금','집','보험','건보/연금','저축','식재료','편의점','외식/배달','병원/약국','쇼핑','여행','교통비','기타']])].filter(Boolean).sort((a,b)=>a.localeCompare(b,'ko'));
   const BASE_SUBS = {
@@ -195,9 +208,9 @@
   const allPays=()=>[...new Set([...db.transactions.map(x=>x.payment),...['신용카드','현금/송금','자동이체','신한HI-POINT','신한클래식Y','쿠팡국민카드','온누리상품권']])].filter(Boolean).sort((a,b)=>a.localeCompare(b,'ko'));
   const quick=()=>{
     const item=db.transactions.find(x=>x.id===editId);
-    const date=item?.date||ymd();let kind=item?.kind||'expense';let area=item?.area||'personal';
+    const date=item?.date||ymd();let kind=item?.kind||'expense';let area=item?.area||'personal';const expenseGroup=item?expenseGroupOf(item):'consumption';
     const recents=sorted(db.transactions.filter(x=>x.kind==='expense')).filter((x,i,a)=>a.findIndex(y=>y.category===x.category&&y.subcategory===x.subcategory)===i).slice(0,9);
-    return intro('FAST ENTRY',item?'거래 수정':'빠른 입력',item?'수정 후 저장하면 기존 거래 1건만 변경됩니다.':'한 건씩 입력하는 화면입니다. 여러 건은 시트형 일괄 입력을 이용하세요.',`<button class="btn" data-page="transactions">거래내역 보기</button>`)+`<div class="quick-layout"><section class="panel"><header class="panel-head"><div><h2>${item?'거래 수정':'새 거래 등록'}</h2><p>원본을 보존하면서 로컬 장부에 반영됩니다.</p></div></header><div class="panel-body"><form id="entry-form"><div class="form-grid"><div class="form-group full"><label>거래 유형</label><div class="radio-tabs">${[['expense','지출'],['income','수입'],['transfer','이체']].map(([k,s])=>`<label><input type="radio" name="kind" value="${k}" ${kind===k?'checked':''}><span>${s}</span></label>`).join('')}</div></div><div class="form-group"><label for="tx-date">날짜</label><input id="tx-date" type="date" name="date" value="${esc(date)}" required></div><div class="form-group"><label for="tx-money">금액 · 원</label><input id="tx-money" name="amount" type="text" inputmode="numeric" value="${item?fmt(item.amount):''}" placeholder="예: 28,500" autocomplete="off" required></div><div class="form-group"><label for="tx-area">구분</label><select id="tx-area" name="area">${['business','personal','review','transfer'].map(v=>`<option value="${v}" ${area===v?'selected':''}>${labelArea(v)}</option>`).join('')}</select></div><div class="form-group"><label for="tx-cat">대분류</label><input list="cat-list" id="tx-cat" name="category" value="${esc(item?.category||'')}" placeholder="예: 담배 발주" required><datalist id="cat-list">${allCats().map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></div><div class="form-group"><label for="tx-sub">소분류 (선택)</label><select id="tx-sub" name="subcategory">${subChoices(item?.category||'',item?.subcategory||'')}</select><input id="tx-sub-custom" name="subcategoryCustom" value="" placeholder="새 소분류 이름" hidden></div><div class="form-group"><label for="tx-pay">결제 수단 (선택)</label><input list="pay-list" id="tx-pay" name="payment" value="${esc(item?.payment||'')}" placeholder="예: 현금/송금"><datalist id="pay-list">${allPays().map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></div><div class="form-group full"><label for="tx-note">메모 (선택)</label><textarea id="tx-note" name="note" placeholder="가게명, 영수증 또는 설명">${esc(item?.note||'')}</textarea></div></div><div class="form-actions"><button class="btn btn-primary" type="submit">${item?'✓ 수정 저장':'✓ 거래 등록'}</button><button class="btn" type="button" id="reset-entry">입력 초기화</button>${item?'<button class="btn btn-danger" type="button" id="cancel-edit">수정 취소</button>':''}</div></form></div></section><section>${card('자주 입력하는 항목','최근 기록을 바탕으로 한 번에 양식 불러오기',recents.map(x=>`<div class="helper-tile"><div><strong>${esc(x.category)}</strong> ${x.subcategory?`<small class="small-muted">/ ${esc(x.subcategory)}</small>`:''}<small style="display:block;color:#a4afb8;margin-top:3px">${esc(x.payment||'결제수단 없음')}</small></div><button class="btn btn-small" data-repeat="${esc(x.id)}">불러오기</button></div>`).join('')||'<div class="empty">기록을 가져오면 자주 쓰는 항목이 나타납니다.</div>')}${card('효율적인 입력 요령','가게부가 자동으로 처리하는 것',`<div class="note-box"><h3>대분류·소분류 선택</h3><p>대분류를 입력하면 기존 기록과 원본 구글 시트 DB의 소분류가 자동으로 선택지에 나타납니다. 새 항목만 ‘직접 입력’을 사용하세요.</p></div><div class="note-box"><h3>저축은 지출이 아닙니다</h3><p>주택청약 등 통장 간 자금 이동은 ‘저축/이체’로 등록해 수익성 계산에서 제외합니다.</p></div><div class="note-box"><h3>토토 일별 자료는 별도</h3><p>일일 수수료를 기록해도 월말 확정 금액을 이중 합산하지 않습니다.</p></div>`)}</section></div>`;
+    return intro('FAST ENTRY',item?'거래 수정':'빠른 입력',item?'수정 후 저장하면 기존 거래 1건만 변경됩니다.':'한 건씩 입력하는 화면입니다. 여러 건은 시트형 일괄 입력을 이용하세요.',`<button class="btn" data-page="transactions">거래내역 보기</button>`)+`<div class="quick-layout"><section class="panel"><header class="panel-head"><div><h2>${item?'거래 수정':'새 거래 등록'}</h2><p>원본을 보존하면서 로컬 장부에 반영됩니다.</p></div></header><div class="panel-body"><form id="entry-form"><div class="form-grid"><div class="form-group full"><label>거래 유형</label><div class="radio-tabs">${[['expense','지출'],['income','수입'],['transfer','이체']].map(([k,s])=>`<label><input type="radio" name="kind" value="${k}" ${kind===k?'checked':''}><span>${s}</span></label>`).join('')}</div></div><div class="form-group"><label for="tx-date">날짜</label><input id="tx-date" type="date" name="date" value="${esc(date)}" required></div><div class="form-group"><label for="tx-money">금액 · 원</label><input id="tx-money" name="amount" type="text" inputmode="numeric" value="${item?fmt(item.amount):''}" placeholder="예: 28,500" autocomplete="off" required></div><div class="form-group"><label for="tx-area">구분</label><select id="tx-area" name="area">${['business','personal','review','transfer'].map(v=>`<option value="${v}" ${area===v?'selected':''}>${labelArea(v)}</option>`).join('')}</select></div>${groupControl(expenseGroup,kind)}<div class="form-group"><label for="tx-cat">대분류</label><input list="cat-list" id="tx-cat" name="category" value="${esc(item?.category||'')}" placeholder="예: 담배 발주" required><datalist id="cat-list">${allCats().map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></div><div class="form-group"><label for="tx-sub">소분류 (선택)</label><select id="tx-sub" name="subcategory">${subChoices(item?.category||'',item?.subcategory||'')}</select><input id="tx-sub-custom" name="subcategoryCustom" value="" placeholder="새 소분류 이름" hidden></div><div class="form-group"><label for="tx-pay">결제 수단 (선택)</label><input list="pay-list" id="tx-pay" name="payment" value="${esc(item?.payment||'')}" placeholder="예: 현금/송금"><datalist id="pay-list">${allPays().map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></div><div class="form-group full"><label for="tx-note">메모 (선택)</label><textarea id="tx-note" name="note" placeholder="가게명, 영수증 또는 설명">${esc(item?.note||'')}</textarea></div></div><div class="form-actions"><button class="btn btn-primary" type="submit">${item?'✓ 수정 저장':'✓ 거래 등록'}</button><button class="btn" type="button" id="reset-entry">입력 초기화</button>${item?'<button class="btn btn-danger" type="button" id="cancel-edit">수정 취소</button>':''}</div></form></div></section><section>${card('자주 입력하는 항목','최근 기록을 바탕으로 한 번에 양식 불러오기',recents.map(x=>`<div class="helper-tile"><div><strong>${esc(x.category)}</strong> ${x.subcategory?`<small class="small-muted">/ ${esc(x.subcategory)}</small>`:''}<small style="display:block;color:#a4afb8;margin-top:3px">${esc(x.payment||'결제수단 없음')}</small></div><button class="btn btn-small" data-repeat="${esc(x.id)}">불러오기</button></div>`).join('')||'<div class="empty">기록을 가져오면 자주 쓰는 항목이 나타납니다.</div>')}${card('효율적인 입력 요령','가게부가 자동으로 처리하는 것',`<div class="note-box"><h3>대분류·소분류 선택</h3><p>대분류를 입력하면 기존 기록과 원본 구글 시트 DB의 소분류가 자동으로 선택지에 나타납니다. 새 항목만 ‘직접 입력’을 사용하세요.</p></div><div class="note-box"><h3>저축은 지출이 아닙니다</h3><p>주택청약 등 통장 간 자금 이동은 ‘저축/이체’로 등록해 수익성 계산에서 제외합니다.</p></div><div class="note-box"><h3>토토 일별 자료는 별도</h3><p>일일 수수료를 기록해도 월말 확정 금액을 이중 합산하지 않습니다.</p></div>`)}</section></div>`;
   };
   const lottoPage=()=>{
     const rows=db.dailyLotto.filter(x=>period==='all'||monthOf(x)===period).sort((a,b)=>b.date.localeCompare(a.date));const list=rows.slice(lottoOffset,lottoOffset+60);
@@ -207,7 +220,7 @@
   const analysis=()=>{
     const t=current(),s=stat(t),rows=monthOverview().filter(x=>period==='all'||x.m===period),base=t.filter(exp),groups=Object.entries(base.reduce((o,x)=>{const k=x.area+'|'+x.category;o[k]=(o[k]||0)+x.amount;return o},{})).sort((a,b)=>b[1]-a[1]);const max=Math.max(...groups.map(x=>x[1]),1);
     const biz=stat(t.filter(x=>x.area==='business'));
-    return intro('SPENDING INTELLIGENCE','지출 분석','가게 매입, 임대료, 생활비를 같은 손익으로 착각하지 않도록 분리합니다.',periodSelect()+`<button class="btn" id="csv-export">↓ CSV</button>`)+sourceBanner()+`<div class="stat-grid">${kpi('사업 지출',s.businessExpense,'발주·담배·운영비·사업 세금','▣')}${kpi('개인 지출',s.personalExpense,'주거·생활·보험 등','⌂')}${kpi('분류 확인 필요',s.unclassified,'임의로 사업/개인 분류하지 않음','?')}${kpi('전체 지출',s.expense,'사업·개인·미분류 합계','↙')}</div><div class="grid-two">${card('지출 분류 TOP 12','비용이 발생한 분야별 내림차순',groups.slice(0,12).map(([key,n],i)=>`<div class="progress-item"><div class="progress-top"><span><span class="chip ${esc(key.split('|')[0])}" style="margin-right:7px">${labelArea(key.split('|')[0])}</span>${esc(key.split('|')[1])}</span><b>${won(n)}</b></div><div class="progress-bar"><i style="width:${(n/max*100).toFixed(1)}%;background:${['#149683','#45a89c','#81b8ae','#8c9fb9','#a9c3bc','#b1b9c8'][i%6]}"></i></div></div>`).join('')||'<div class="empty">지출이 없습니다.</div>')}${card('편의점 비용 구조','실제 영업이익 산출에는 기초·기말 재고와 카드매출 정산액도 필요합니다.',`<div class="metric-line"><span>월별 수입 합계</span><strong>${won(s.businessIncome)}</strong></div><div class="metric-line"><span>사업 지출 합계</span><strong>−${won(s.businessExpense)}</strong></div><div class="metric-line"><strong>사업 장부 차액</strong><strong>${fmtSigned(s.businessIncome-s.businessExpense)}</strong></div><div class="soft-bg"><div class="small-muted">상품을 사들인 시점의 금액을 비용으로 표시합니다. 아직 판매되지 않은 재고까지 비용으로 잡혀 실제 이익과 차이가 납니다.</div></div><div class="metric-line"><span>일반 발주 합계</span><strong>${won(sum(t.filter(x=>x.category==='발주'&&exp(x))))}</strong></div><div class="metric-line"><span>담배 발주 합계</span><strong>${won(sum(t.filter(x=>x.category==='담배 발주'&&exp(x))))}</strong></div><div class="metric-line"><span>가게 유지·운영비</span><strong>${won(sum(t.filter(x=>x.category==='가게'&&exp(x))))}</strong></div><div class="metric-line"><span>개인 지출 + 미분류</span><strong>${won(s.personalExpense+s.unclassified)}</strong></div>` )}</div>${card('월별 비교','1월부터 최근 확정 자료까지',chart(rows))}<section class="panel"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>월</th><th class="right">수입</th><th class="right">사업 지출</th><th class="right">사업 차액</th><th class="right">개인 지출</th><th class="right">미분류</th><th class="right">전체 차액</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.m)}</td><td class="right">${fmt(x.income)}</td><td class="right">${fmt(x.businessExpense)}</td><td class="right ${x.income-x.businessExpense<0?'neg':'pos'}">${fmt(x.income-x.businessExpense)}</td><td class="right">${fmt(x.personalExpense)}</td><td class="right">${fmt(x.unclassified)}</td><td class="right ${x.income-x.expense<0?'neg':'pos'}">${fmt(x.income-x.expense)}</td></tr>`).join('')}</tbody></table></div></section>`;
+    return intro('SPENDING INTELLIGENCE','지출 분석','가게 매입, 임대료, 생활비를 같은 손익으로 착각하지 않도록 분리합니다.',periodSelect()+`<button class="btn" id="csv-export">↓ CSV</button>`)+sourceBanner()+`<div class="stat-grid">${kpi('사업 지출',s.businessExpense,'발주·담배·운영비·사업 세금','▣')}${kpi('개인 지출',s.personalExpense,'주거·생활·보험 등','⌂')}${kpi('분류 확인 필요',s.unclassified,'임의로 사업/개인 분류하지 않음','?')}${kpi('전체 지출',s.expense,'사업·개인·미분류 합계','↙')}</div>${card('원본 장부별 지출','고정지출과 소비지출은 원본의 장부 구분입니다. 상품·담배 발주처럼 매달 금액이 달라지는 항목도 고정지출에 포함됩니다.',`<div class="metric-line"><span>고정지출</span><strong>${won(sum(t.filter(x=>expenseGroupOf(x)==='fixed')))}</strong></div><div class="metric-line"><span>소비지출</span><strong>${won(sum(t.filter(x=>expenseGroupOf(x)==='consumption')))}</strong></div>`)}<div class="grid-two">${card('지출 분류 TOP 12','비용이 발생한 분야별 내림차순',groups.slice(0,12).map(([key,n],i)=>`<div class="progress-item"><div class="progress-top"><span><span class="chip ${esc(key.split('|')[0])}" style="margin-right:7px">${labelArea(key.split('|')[0])}</span>${esc(key.split('|')[1])}</span><b>${won(n)}</b></div><div class="progress-bar"><i style="width:${(n/max*100).toFixed(1)}%;background:${['#149683','#45a89c','#81b8ae','#8c9fb9','#a9c3bc','#b1b9c8'][i%6]}"></i></div></div>`).join('')||'<div class="empty">지출이 없습니다.</div>')}${card('편의점 비용 구조','실제 영업이익 산출에는 기초·기말 재고와 카드매출 정산액도 필요합니다.',`<div class="metric-line"><span>월별 수입 합계</span><strong>${won(s.businessIncome)}</strong></div><div class="metric-line"><span>사업 지출 합계</span><strong>−${won(s.businessExpense)}</strong></div><div class="metric-line"><strong>사업 장부 차액</strong><strong>${fmtSigned(s.businessIncome-s.businessExpense)}</strong></div><div class="soft-bg"><div class="small-muted">상품을 사들인 시점의 금액을 비용으로 표시합니다. 아직 판매되지 않은 재고까지 비용으로 잡혀 실제 이익과 차이가 납니다.</div></div><div class="metric-line"><span>일반 발주 합계</span><strong>${won(sum(t.filter(x=>x.category==='발주'&&exp(x))))}</strong></div><div class="metric-line"><span>담배 발주 합계</span><strong>${won(sum(t.filter(x=>x.category==='담배 발주'&&exp(x))))}</strong></div><div class="metric-line"><span>가게 유지·운영비</span><strong>${won(sum(t.filter(x=>x.category==='가게'&&exp(x))))}</strong></div><div class="metric-line"><span>개인 지출 + 미분류</span><strong>${won(s.personalExpense+s.unclassified)}</strong></div>` )}</div>${card('월별 비교','1월부터 최근 확정 자료까지',chart(rows))}<section class="panel"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>월</th><th class="right">수입</th><th class="right">사업 지출</th><th class="right">사업 차액</th><th class="right">개인 지출</th><th class="right">미분류</th><th class="right">전체 차액</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.m)}</td><td class="right">${fmt(x.income)}</td><td class="right">${fmt(x.businessExpense)}</td><td class="right ${x.income-x.businessExpense<0?'neg':'pos'}">${fmt(x.income-x.businessExpense)}</td><td class="right">${fmt(x.personalExpense)}</td><td class="right">${fmt(x.unclassified)}</td><td class="right ${x.income-x.expense<0?'neg':'pos'}">${fmt(x.income-x.expense)}</td></tr>`).join('')}</tbody></table></div></section>`;
   };
   const recurring=()=>{
     const candidates=db.transactions.filter(x=>x.kind==='expense'&&x.sourceSheet==='고정지출').reduce((o,x)=>{const key=x.area+'|'+x.category+'|'+x.subcategory+'|'+x.payment;(o[key]??=[]).push(x);return o},{});
@@ -224,11 +237,12 @@
 
   // A spreadsheet-like batch editor: each cell is independent, with Tab/arrow navigation
   // and TSV clipboard paste. Blank rows never create transactions.
-  const fields=['date','amount','area','category','subcategory','payment','note'];
-  const fieldLabel={date:'날짜',amount:'금액 (원)',area:'구분',category:'대분류',subcategory:'소분류',payment:'결제 수단',note:'메모'};
+  const fields=['date','amount','expenseGroup','area','category','subcategory','payment','note'];
+  const fieldLabel={date:'날짜',amount:'금액 (원)',expenseGroup:'지출 종류',area:'사용처',category:'대분류',subcategory:'소분류',payment:'결제 수단',note:'메모'};
   const isoDate=value=>{const raw=String(value||'').trim().replace(/[./]/g,'-');const m=raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);if(!m)return '';const y=+m[1],month=+m[2],day=+m[3];if(month<1||month>12||day<1||day>new Date(y,month,0).getDate())return '';return `${y}-${pad(month)}-${pad(day)}`};
   const batchCell=(i,f,value='',kind=sheetKind)=>{
     const common=`class="grid-cell" data-grid="sheet" data-row="${i}" data-col="${f}" aria-label="${i+1}행 ${fieldLabel[f]}"`;
+    if(f==='expenseGroup')return '<select '+common+(kind==='expense'?'':' disabled')+' aria-haspopup="listbox" aria-expanded="false">'+[['fixed','고정지출'],['consumption','소비지출']].map(([v,n])=>'<option value="'+v+'"'+((value||'consumption')===v?' selected':'')+'>'+n+'</option>').join('')+'</select>';
     if(f==='area')return `<select ${common} aria-haspopup="listbox" aria-expanded="false">${[['personal','개인'],['business','편의점'],['review','확인 필요'],['transfer','저축/이체']].map(([k,n])=>`<option value="${k}" ${(value||((kind==='income')?'business':'personal'))===k?'selected':''}>${n}</option>`).join('')}</select>`;
     if(f==='category')return `<input ${common} value="${esc(value)}" placeholder="대분류" autocomplete="off" aria-haspopup="listbox" aria-expanded="false">`;
     if(f==='subcategory')return `<input ${common} list="sheet-sub-${i}" value="${esc(value)}" placeholder="선택/직접 입력"><datalist id="sheet-sub-${i}"></datalist>`;
@@ -239,7 +253,7 @@
   const batchRow=(i,obj={})=>`<tr data-grid-row="${i}"><th scope="row" class="sheet-row-num">${i+1}</th>${fields.map(f=>`<td>${batchCell(i,f,obj[f]??(f==='date'?sheetDate:''))}</td>`).join('')}</tr>`;
   const sheetPage=()=>{
     const pays=allPays();
-    return intro('SHEET ENTRY','시트형 일괄 입력','같은 날짜 거래를 여러 줄로 적고 한 번에 저장합니다. 열을 원하는 순서로 채우거나 엑셀에서 복사한 칸을 붙여넣을 수 있습니다.',`<button class="btn" data-page="quick">1건씩 입력</button>`)+
+    return intro('SHEET ENTRY','시트형 일괄 입력','같은 날짜 거래를 여러 줄로 적고 한 번에 저장합니다. 고정지출·소비지출은 원본 장부 구분으로, 매월 반복 고정비 여부와는 다릅니다. 엑셀 여러 칸 붙여넣기도 가능합니다.',`<button class="btn" data-page="quick">1건씩 입력</button>`)+
     `<section class="panel"><div class="sheet-toolbar"><label>입력 종류 <select id="sheet-kind" class="select"><option value="expense" ${sheetKind==='expense'?'selected':''}>지출</option><option value="income" ${sheetKind==='income'?'selected':''}>수입</option><option value="transfer" ${sheetKind==='transfer'?'selected':''}>이체</option></select></label><label>기본 날짜 <input id="sheet-date" type="date" value="${esc(sheetDate)}"></label><button id="sheet-date-fill" class="btn btn-small">모든 행에 날짜 적용</button><button id="sheet-row-add" class="btn btn-small">＋ 10행</button><button id="sheet-clear" class="btn btn-small">비우기</button></div><div class="sheet-hint">입력 순서는 자유입니다. <kbd>Enter</kbd> 구분·대분류 메뉴 열기/선택 · <kbd>↑↓←→</kbd> 셀 이동 (메뉴가 열리면 ↑↓ 항목 선택) · <kbd>Tab</kbd> 다음 칸 · <kbd>Esc</kbd> 메뉴 닫기 · <kbd>Ctrl+V</kbd> 여러 칸 붙여넣기. 빈 금액 행은 저장되지 않습니다.</div><div class="sheet-scroll"><table class="sheet-table" id="sheet-grid"><thead><tr><th scope="col">#</th>${fields.map(f=>`<th scope="col">${fieldLabel[f]}</th>`).join('')}</tr></thead><tbody id="sheet-rows">${Array.from({length:20},(_,i)=>batchRow(i)).join('')}</tbody></table></div><datalist id="sheet-pay-list">${pays.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist><div class="sheet-footer"><div id="sheet-count">입력할 거래 0건</div><button id="sheet-save" class="btn btn-primary">✓ 작성된 거래 한 번에 저장</button></div></section>`+
     card('월말 가게 매출','매월 마지막 날에 한 건만 등록합니다. 이미 입력된 월은 중복 생성하지 않고 기존 기록 수정을 확인합니다.',`<form id="monthly-sales-form"><div class="monthly-sales-form"><label>매출 월 <input name="month" type="month" required value="${esc(sheetDate.slice(0,7))}"></label><label>가게 매출액 · 원 <input name="amount" inputmode="numeric" placeholder="월 매출 합계" required></label><label>메모 <input name="note" placeholder="월말 정산 메모 (선택)"></label><button class="btn btn-primary" type="submit">월 매출 저장</button></div></form>`);
   };
@@ -274,10 +288,10 @@
     }
   };
   const openSheetPicker=(cell,filter=false)=>{
-    if(cell?.dataset.grid!=='sheet'||!['area','category'].includes(cell.dataset.col))return;
+    if(cell?.dataset.grid!=='sheet'||!['expenseGroup','area','category'].includes(cell.dataset.col))return;
     closeSheetPicker();
-    const area=cell.dataset.col==='area';
-    const items=area?[...cell.options].map(x=>({value:x.value,label:x.textContent})):
+    const selectCell=cell.tagName==='SELECT';
+    const items=selectCell?[...cell.options].map(x=>({value:x.value,label:x.textContent})):
       allCats().map(x=>({value:x,label:x}));
     const query=filter?cell.value.trim().toLocaleLowerCase('ko'):'';
     const options=query?items.filter(x=>x.label.toLocaleLowerCase('ko').includes(query)):items;
@@ -287,7 +301,7 @@
     panel.className='sheet-choice-picker';
     panel.id='sheet-choice-list';
     panel.setAttribute('role','listbox');
-    panel.setAttribute('aria-label',area?'구분 선택':'대분류 선택');
+    panel.setAttribute('aria-label',cell.dataset.col==='expenseGroup'?'지출 종류 선택':cell.dataset.col==='area'?'사용처 선택':'대분류 선택');
     panel.style.width=width+'px';
     panel.style.left=Math.max(8,Math.min(rect.left,vpWidth-width-8))+'px';
     const above=rect.top,beneath=window.innerHeight-rect.bottom;
@@ -348,7 +362,8 @@
       const date=isoDate(x.date),amount=val(x.amount),category=String(x.category).trim();
       if(!date||!(amount>0)||!category)errors.push(`${i+1}번째 입력 거래: 날짜·금액·대분류 확인`);
       const kind=sheetKind,area=kind==='transfer'?'transfer':x.area;
-      return {id:'new-'+crypto.randomUUID(),date,amount,kind,area,category,subcategory:String(x.subcategory).trim(),payment:String(x.payment).trim(),note:String(x.note).trim(),sourceSheet:'직접 입력',sourceRow:null};
+      const expenseGroup=kind==='expense'?(x.expenseGroup||inferExpenseGroup(category)):'';
+      return {id:'new-'+crypto.randomUUID(),date,amount,kind,area,expenseGroup,category,subcategory:String(x.subcategory).trim(),payment:String(x.payment).trim(),note:String(x.note).trim(),sourceSheet:'직접 입력',sourceRow:null};
     });
     if(errors.length){toast(errors.slice(0,3).join(' / '));return}
     if(sheetKind==='income'&&prepared.some(x=>x.category==='토토 수수료'||x.category==='가게 매출')){
@@ -406,7 +421,7 @@
   const go=p=>{if(!views[p])p='dashboard';lastView=page;page=p;ledgerOffset=0;lottoOffset=0;render();window.scrollTo({top:0,behavior:'instant'})};
   const download=(name,body,type='application/json;charset=utf-8')=>{const blob=new Blob([body],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)};
   const exportJSON=()=>download(`가게부_백업_${ymd()}.json`,JSON.stringify({...db,backupAt:new Date().toISOString()},null,2));
-  const exportCSV=()=>{const cols=['date','kind','area','category','subcategory','amount','payment','note','sourceSheet','sourceRow'];const csv=[['날짜','유형','구분','대분류','소분류','금액','결제수단','메모','원본시트','원본행'].join(','),...sorted(current()).map(x=>cols.map(k=>{let v=x[k]??'';if(k==='kind')v=labelKind(v);if(k==='area')v=labelArea(v);return `"${String(v).replaceAll('"','""')}"`}).join(','))].join('\r\n');download(`가게부_거래내역_${period==='all'?'2026':period}.csv`,'\ufeff'+csv,'text/csv;charset=utf-8')};
+  const exportCSV=()=>{const cols=['date','kind','expenseGroup','area','category','subcategory','amount','payment','note','sourceSheet','sourceRow'];const csv=[['날짜','유형','지출 종류','사용처','대분류','소분류','금액','결제수단','메모','원본시트','원본행'].join(','),...sorted(current()).map(x=>cols.map(k=>{let v=k==='expenseGroup'?labelExpenseGroup(x):(x[k]??'');if(k==='kind')v=labelKind(v);if(k==='area')v=labelArea(v);return `"${String(v).replaceAll('"','""')}"`}).join(','))].join('\r\n');download(`가게부_거래내역_${period==='all'?'2026':period}.csv`,'\ufeff'+csv,'text/csv;charset=utf-8')};
   const importJSON=async file=>{
     if(!file)return;
     let o;
@@ -442,7 +457,7 @@
     db={...empty(),...o,transactions:[...o.transactions,...localRecords],dailyLotto:[...o.dailyLotto,...localLotto]};
     upgrade(db);
     if(!save()){db=previous;return}
-    period='all';filters={query:'',area:'all',kind:'all',category:'all'};
+    period='all';filters={query:'',area:'all',kind:'all',expenseGroup:'all',category:'all'};
     go('dashboard');
     toast(merge?`시트 갱신 완료 · 수기 입력 ${localRecords.length}건 보존`:`이관 완료: ${label}`);
   };
@@ -451,6 +466,8 @@
     const e=document.querySelector('#tx-cat'),a=document.querySelector('#tx-area'),k=document.querySelector('input[name="kind"]:checked');
     if(!e||!a||!k)return;
     const cat=e.value,kind=k.value;
+    const wrap=document.querySelector('#tx-expense-group-wrap');if(wrap)wrap.hidden=kind!=='expense';
+    const group=document.querySelector('#tx-expense-group');if(group&&!group.dataset.manual)group.value=inferExpenseGroup(cat);
     if(kind==='income'){a.value='business';return}
     if(kind==='transfer'){a.value='transfer';return}
     if(['담배 발주','발주','가게'].includes(cat))a.value='business';
@@ -460,14 +477,14 @@
   };
   const entrySave=form=>{
     const data=new FormData(form),date=String(data.get('date')),amount=val(data.get('amount'));
-    const category=String(data.get('category')||'').trim(),kind=String(data.get('kind')),area=String(data.get('area'));
+    const category=String(data.get('category')||'').trim(),kind=String(data.get('kind')),area=String(data.get('area')),expenseGroup=kind==='expense'?String(data.get('expenseGroup')||inferExpenseGroup(category)):'';
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!(amount>0)||!category){toast('날짜 · 금액 · 분류를 확인해 주세요.');return}
     let subcategory=String(data.get('subcategory')||'').trim();
     if(subcategory==='__custom__')subcategory=String(data.get('subcategoryCustom')||'').trim();
     if(kind==='income'&&category==='토토 수수료'&&db.transactions.some(x=>x.id!==editId&&x.kind==='income'&&x.category==='토토 수수료'&&monthOf(x)===date.slice(0,7))){if(!confirm('같은 달에 토토 확정 수입이 이미 있습니다. 중복 등록 가능성이 있습니다. 그래도 저장하시겠습니까?'))return}
     let rec=editId?db.transactions.find(x=>x.id===editId):null;
     if(!rec){rec={id:'new-'+crypto.randomUUID(),sourceSheet:'직접 입력',sourceRow:null};db.transactions.push(rec)}
-    Object.assign(rec,{date,amount,kind,area:kind==='transfer'?'transfer':area,category,subcategory,payment:String(data.get('payment')||'').trim(),note:String(data.get('note')||'').trim()});
+    Object.assign(rec,{date,amount,kind,area:kind==='transfer'?'transfer':area,expenseGroup,category,subcategory,payment:String(data.get('payment')||'').trim(),note:String(data.get('note')||'').trim()});
     delete rec.counterparty;
     if(save()){editId=null;go('transactions');toast('거래가 저장되었습니다.')}
   };
@@ -482,6 +499,8 @@
     f.querySelector(`[name="kind"][value="${x.kind}"]`).checked=true;
     for(const k of ['area','category','payment','note'])f.querySelector(`[name="${k}"]`).value=x[k]||'';
     refreshSub(x.subcategory||'');
+    f.querySelector('[name="expenseGroup"]').value=expenseGroupOf(x)||'consumption';
+    const wrap=f.querySelector('#tx-expense-group-wrap');if(wrap)wrap.hidden=x.kind!=='expense';
     f.querySelector('[name="amount"]').focus();toast('기존 거래 양식을 불러왔습니다. 날짜와 금액을 확인하세요.');
   };
   const edit=id=>{editId=id;go('quick')};
@@ -523,6 +542,9 @@
     if(el.id==='lotto-batch-month'){if([...document.querySelectorAll('#lotto-batch-grid [data-grid]')].some(x=>x.value!==x.defaultValue)&&!confirm('입력 월을 바꾸면 작성 중인 값이 초기화됩니다. 계속할까요?')){el.value=lottoEntryMonth;return}lottoEntryMonth=el.value;period=lottoEntryMonth;render();return}
     if(el.dataset.grid==='sheet'&&el.dataset.col==='category'){fillSubChoices(Number(el.dataset.row));return}
     if(el.dataset.grid==='sheet'&&el.dataset.col==='area'){el.dataset.manual='1';return}
+    if(el.dataset.grid==='sheet'&&el.dataset.col==='expenseGroup'){el.dataset.manual='1';return}
+    if(el.id==='tx-expense-group'){el.dataset.manual='1';return}
+    if(el.id==='f-expense-group'){filters.expenseGroup=el.value;ledgerOffset=0;render();return}
     if(el.id==='period-select'){period=el.value;if(page==='lotto'&&period!=='all')lottoEntryMonth=period;ledgerOffset=0;lottoOffset=0;render();return}
     if(el.id==='import-file'){importJSON(el.files?.[0]);return}
     if(el.id==='f-query'){filters.query=el.value;ledgerOffset=0;render();return}
@@ -535,7 +557,7 @@
   }));
   document.addEventListener('input',e=>safeClick(()=>{
     const el=e.target;
-    if(el.dataset.grid==='sheet'){if(el.dataset.col==='category'){if(sheetPicker?.cell===el)openSheetPicker(el,true);fillSubChoices(Number(el.dataset.row));const row=el.closest('tr');const area=row.querySelector('[data-col="area"]');if(!area.dataset.manual){const cat=el.value;if(['담배 발주','발주','가게'].includes(cat))area.value='business';else if(cat==='저축')area.value='transfer';else if(cat==='세금')area.value='review';else if(cat)area.value='personal';}}countSheetRows();return}
+    if(el.dataset.grid==='sheet'){if(el.dataset.col==='category'){if(sheetPicker?.cell===el)openSheetPicker(el,true);fillSubChoices(Number(el.dataset.row));const row=el.closest('tr');const group=row.querySelector('[data-col="expenseGroup"]');if(group&&!group.dataset.manual)group.value=inferExpenseGroup(el.value);const area=row.querySelector('[data-col="area"]');if(!area.dataset.manual){const cat=el.value;if(['담배 발주','발주','가게'].includes(cat))area.value='business';else if(cat==='저축')area.value='transfer';else if(cat==='세금')area.value='review';else if(cat)area.value='personal';}}countSheetRows();return}
     if(el.id==='f-query'){const start=el.selectionStart||0;filters.query=el.value;ledgerOffset=0;render();const next=document.querySelector('#f-query');next.focus();next.setSelectionRange(start,start);return}
     if(el.id==='tx-cat'){selectCategory();refreshSub();return}
     if(el.id==='tx-money'||(el.closest('#lotto-form')&&['handle','commission'].includes(el.name))){const pos=el.selectionStart,old=el.value,clean=old.replace(/[^\d]/g,'');el.value=clean?fmt(Number(clean)):'';if(typeof pos==='number')el.setSelectionRange(el.value.length,el.value.length)}
@@ -548,10 +570,10 @@
       if(item){e.preventDefault();chooseSheetPicker(Number(item.dataset.choiceIndex))}
       return;
     }
-    const area=e.target.closest?.('[data-grid="sheet"][data-col="area"]');
-    if(area){
-      e.preventDefault();area.focus();
-      if(sheetPicker?.cell===area)closeSheetPicker();else openSheetPicker(area);
+    const selectCell=e.target.closest?.('[data-grid="sheet"][data-col="area"],[data-grid="sheet"][data-col="expenseGroup"]');
+    if(selectCell&&!selectCell.disabled){
+      e.preventDefault();selectCell.focus();
+      if(sheetPicker?.cell===selectCell)closeSheetPicker();else openSheetPicker(selectCell);
       return;
     }
     if(sheetPicker&&e.target!==sheetPicker.cell)closeSheetPicker();
@@ -571,7 +593,7 @@
     const grid=e.target?.dataset?.grid;
     if(grid==='sheet'||grid==='lotto'){
       const row=Number(e.target.dataset.row),col=e.target.dataset.col;
-      const pickable=grid==='sheet'&&(col==='area'||col==='category');
+      const pickable=grid==='sheet'&&(col==='area'||col==='category'||col==='expenseGroup'&&!e.target.disabled);
       if(sheetPicker?.cell===e.target){
         if(e.key==='Escape'){e.preventDefault();closeSheetPicker();return}
         if(e.key==='Enter'){e.preventDefault();chooseSheetPicker(sheetPicker.active);return}

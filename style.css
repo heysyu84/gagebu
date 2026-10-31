@@ -17,3 +17,13 @@
 .sheet-choice-option{display:block;width:100%;border:0;border-radius:6px;background:transparent;text-align:left;padding:9px 10px;color:var(--ink);font-size:13px;line-height:1.35;cursor:pointer}
 .sheet-choice-option:hover,.sheet-choice-option.active{background:#e4f5f1;color:#086f62}
 .sheet-choice-empty{padding:12px 10px;color:var(--muted);font-size:12px;line-height:1.5}
+
+/* Original ledger grouping is separate from owner / usage. */
+.sheet-table{min-width:1090px}
+.sheet-table th:nth-child(4){width:118px}
+.sheet-table th:nth-child(5){width:110px}
+.sheet-table th:nth-child(6){width:145px}
+.sheet-table th:nth-child(7){width:140px}
+.sheet-table th:nth-child(8){width:142px}
+.sheet-table th:nth-child(9){width:160px}
+.form-group[hidden]{display:none!important}
