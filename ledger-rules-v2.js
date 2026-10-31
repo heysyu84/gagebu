@@ -9,6 +9,7 @@ const TOTO=/(?:스포츠\s*토토|스포츠토토코리아|토토\s*당첨|토�
 const INVEST=/(?:증권|주식(?!회사)|투자|해외주식|ETF|코인|업비트|빗썸|미래에셋|키움|삼성증권|한국투자|토스증권|KB증권|신한투자)/i;
 const PREPAID=/(?:온누리\s*충전|페이머니\s*충전|카카오페이\s*충전|토스머니\s*충전|선불금\s*충전)/i;
 const CARD_SETTLEMENT=/(?:카드대금|카드결제대금|신용카드\s*결제|카드\s*출금|카드\s*자동납부)/i;
+const PAYROLL=/(?:인건비|급여|급료|월급|직원\s*급여|알바비|일용직\s*급여)/i;
 const GANGDONG=/(?:강동|둔촌|길동|성내|천호|암사|명일|고덕|상일|강일|올림픽공원\s*북|성일\s*동)/i;
 const OUTSIDE=/(?:종로|종각|낙원|을지로|을지|광화문|청계|명동|동대문|신논현|강남|서초|홍대|합정|마포|연남|신촌|이태원|용산|성수|왕십리|광진|잠실|송파|가락|수유|신사|구로|영등포|여의도|혜화|안국|북촌|을지\s*\d|인사동)/i;
 // Rent payees are private: never hardcode personal recipient names in public source.
@@ -94,6 +95,48 @@ function classify(row,customRules={}){
  if(matches(m,TOTO))return skip('토토 관련 입출금 제외');
  if(matches(m,PREPAID))return skip('온누리·페이머니 충전 — 실제 사용과 이중 집계 방지');
  if(matches(m,CARD_SETTLEMENT)||row.major==='카드대금')return skip('카드대금 이체 — 이중 집계 방지');
+ if(matches([m,row.memo||''].join(' '),PAYROLL))return skip('인건비·급여 이체: 별도 관리, 뱅크샐러드 자동 등록 제외');
+
+ // User's private exact-merchant rules must run before generic transfer exclusion.
+ if(['지출','이체'].includes(type)&&m&&customRules[n(m)]){
+   const c=customRules[n(m)];
+   if(c.scope==='exclude')return skip('사용자 지정 제외 규칙');
+   if(['personal','business','windmoon'].includes(c.scope)){
+     const item=classification(c.scope,m,row.major,row.minor,'사용자 지정 거래처 규칙');
+     if(c.category)item.category=c.category;
+     if(c.subcategory)item.subcategory=c.subcategory;
+     if(c.ledgerType)item.ledgerType=c.ledgerType;
+     if(c.scope==='windmoon')item.subcategory='풍월관';
+     return item;
+   }
+ }
+ if(['지출','이체'].includes(type)&&/(?:한국전력|^한전)/i.test(m)){
+   const shop=Math.abs(amount)>300000;
+   return {action:'keep',scope:shop?'business':'personal',status:'confirmed',
+    ledgerType:'fixed',category:shop?'가게':'집',subcategory:'전기료',
+    reason:shop?'한전 30만원 초과: 가게 전기료':'한전 30만원 이하: 집 전기료',confidence:0.95};
+ }
+ if(['지출','이체'].includes(type)&&/(?:코원에너지|코윈에너지)/i.test(m))
+   return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
+    category:'집',subcategory:'가스요금',reason:'집 도시가스 요금',confidence:0.95};
+ if(['지출','이체'].includes(type)&&/브로드밴드/i.test(m))
+   return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
+    category:'집',subcategory:'인터넷',reason:'집 인터넷 요금',confidence:0.95};
+ if(type==='지출'&&/(?:LG\s*U\+|LGU\+|LG유플러스|엘지유플러스)/i.test(m)){
+   const shop=Math.abs(amount)<55000;
+   return {action:'keep',scope:shop?'business':'personal',status:'confirmed',
+    ledgerType:'fixed',category:shop?'가게':'집',subcategory:shop?'인터넷':'통신료',
+    reason:shop?'반복 가게 인터넷 요금대':'반복 개인 휴대폰 요금대',confidence:0.85};
+ }
+ if(type==='지출'&&/(?:에스케이텔레콤|SK\s*세븐모바일|큰사람커넥트|11pay_SKT정기결제)/i.test(m))
+   return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
+    category:'집',subcategory:'통신료',reason:'일반·알뜰폰 요금: 집 통신',confidence:0.95};
+ if(type==='지출'&&/(?:삼성화(?:재)?|메리츠)/i.test(m)){
+   const samsung=/삼성화/i.test(m);
+   return {action:'keep',scope:'personal',status:'confirmed',ledgerType:'fixed',
+    category:'보험',subcategory:samsung?'삼성화재':'메리츠',
+    reason:'기존 보험사 정기 보험료',confidence:0.95};
+ }
  // Transfers to known fixed payees are real rent expenses. Other personal transfers are
  // omitted from spending, because most are toto prize settlements rather than expenses.
  if(type==='이체'){
@@ -105,20 +148,7 @@ function classify(row,customRules={}){
  }
  if(type!=='지출')return skip('지출 유형이 아닌 거래');
  if(!m)return review('거래처 이름이 없어 확인 필요',m,row.major,row.minor);
- if(customRules[n(m)]){
-   const c=customRules[n(m)];
-   if(c.scope==='exclude')return skip('사용자 지정 제외 규칙');
-   const item=classification(c.scope,m,row.major,row.minor,'사용자 지정 거래처 규칙');
-   if(c.category)item.category=c.category;
-   if(c.subcategory)item.subcategory=c.subcategory;
-   if(c.ledgerType)item.ledgerType=c.ledgerType;
-   if(c.scope==='windmoon'){
-     // Legacy custom classifications could still store Windmoon as a major.
-     item.category=categoryFor('windmoon',row.major,row.minor,m)[0];
-     item.subcategory='풍월관';
-   }
-   return item;
- }
+
  if(matches(m,DAISO))return classification('windmoon',m,row.major,row.minor,'다이소 전 거래 풍월관');
  if(/^(?:KTNG|KT&G)/i.test(m))return {action:'keep',scope:'business',status:'confirmed',ledgerType:'fixed',category:'담배 발주',subcategory:'KT&G',reason:'담배 매입 거래처 확인',confidence:0.95};
  if(matches(m,DELIVERY)||(row.major==='식비'&&/배달/.test(String(row.minor||''))))
