@@ -293,3 +293,21 @@
  .filter-row .payment-filter{flex:1 1 150px;max-width:none}
  .payment-filter-notice{margin:10px 13px 1px}
 }
+
+
+/* Linked card refunds and unmatched positive-statement credits */
+.bank-refund-info{font-size:11px;font-weight:730;color:#3d806b;align-self:center;margin-right:auto}
+.ledger-refund-section{margin-top:18px}
+.ledger-refund-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:3px 23px 19px}
+.ledger-refund-metrics>div{background:#f6faf8;border:1px solid #e2eee7;border-radius:10px;padding:15px 16px}
+.ledger-refund-metrics span{display:block;font-size:11px;color:#728b81;margin-bottom:8px}
+.ledger-refund-metrics strong{display:block;font-size:17px;color:#204b40;font-variant-numeric:tabular-nums}
+.ledger-refund-table{min-width:750px}
+.ledger-refund-table .ledger-refund-positive{color:#087b5e;font-weight:820;font-variant-numeric:tabular-nums}
+.records-table .amount-col small{font-size:10px;color:#4f907b;line-height:1.55;white-space:normal}
+@media(max-width:650px){
+ .ledger-refund-metrics{padding:3px 13px 14px;gap:7px}
+ .ledger-refund-metrics>div{padding:12px 10px}
+ .ledger-refund-metrics strong{font-size:14px}
+ .bank-refund-info{flex-basis:100%}
+}
