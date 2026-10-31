@@ -1,0 +1,11 @@
+wrangler.toml
+.dev.vars
+.env
+.env.*
+.wrangler/
+node_modules/
+*.sqlite
+*.sqlite3
+*이관데이터*.json
+*개인용*.html
+*가계부 2026*.xlsx
