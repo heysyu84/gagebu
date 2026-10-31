@@ -31,7 +31,7 @@ function migrateLegacy(data){
   scope:ledgerScope(x),ledgerType:x.sourceSheet==='고정지출'?'fixed':x.sourceSheet==='소비지출'?'consumption':'',
   category:String(x.category||''),subcategory:String(x.subcategory||''),
   merchant:String(x.merchant||''),payment:String(x.payment||''),note:String(x.note||''),
-  source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),
+  source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),sourceRow:x.sourceRow??null,
   originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
  return entries.filter(x=>x.date.startsWith('2026-'));
@@ -315,9 +315,27 @@ async function importLegacy(file){
  try{const obj=JSON.parse(await file.text());rows=migrateLegacy(obj)}
  catch(e){toast('원본 JSON을 읽을 수 없습니다: '+e.message);return}
  const existing=new Set(state.records.map(x=>x.id));
- const additions=rows.filter(x=>!existing.has(x.id));
- if(!additions.length){toast('이미 등록된 원장 기록입니다.');return}
- if(!confirm('기존 구글 시트 기록 '+additions.length+'건을 보존하면서 합칠까요? 이미 가져온 은행 결제와 대조합니다.'))return;
+ const keyed=new Map(state.records.filter(x=>x.source==='legacy'&&x.sourceRow!=null&&x.sourceSheet)
+   .map(x=>[x.sourceSheet+'|'+x.sourceRow,x]));
+ const additions=[],updates=[];let conflicts=0;
+ for(const entry of rows){
+   const key=entry.sourceSheet+'|'+entry.sourceRow;
+   const old=state.records.find(x=>x.id===entry.id)|| (entry.sourceRow==null?null:keyed.get(key));
+   if(!old){additions.push(entry);continue}
+   if(old.manual)continue;
+   if(old.date!==entry.date||old.direction!==entry.direction){
+     conflicts++;continue; // a reordered/modified source row must not overwrite a different transaction.
+   }
+   updates.push({old,entry});
+ }
+ if(!additions.length&&!updates.length){toast('이미 최신 원장입니다. 변경이 필요한 행 '+conflicts+'건은 덮어쓰지 않았습니다.');return}
+ if(!confirm('새 거래 '+additions.length+'건을 추가하고 기존 원장 '+updates.length+'건의 시트 정보를 갱신할까요? 은행 결제와 연결된 거래처·결제정보는 보존합니다.'+(conflicts?' 원본 위치가 바뀐 의심 행 '+conflicts+'건은 유지합니다.':'')))return;
+ for(const {old,entry} of updates){
+   old.amount=entry.amount;old.category=entry.category;old.subcategory=entry.subcategory;
+   old.payment=entry.payment;old.note=entry.note;old.sourceRow=entry.sourceRow;
+   // Retain manually corrected ownership, attached bank merchant and link.
+   if(old.status!=='review'){old.scope=entry.scope;old.ledgerType=entry.ledgerType}
+ }
  const linkedBankIds=new Set();
  for(const original of additions){
    if(original.direction!=='expense'||(original.category==='발주'&&original.subcategory==='주류'))continue;
@@ -335,8 +353,8 @@ async function importLegacy(file){
  }
  if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
  state.records.push(...additions);
- state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,linked:linkedBankIds.size,source:'legacy'});
- if(save()){render();toast('원본 '+additions.length+'건 등록, 은행 중복 '+linkedBankIds.size+'건 연결 완료')}
+ state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,updated:updates.length,linked:linkedBankIds.size,source:'legacy'});
+ if(save()){render();toast('원본 신규 '+additions.length+'건 · 기존 갱신 '+updates.length+'건 · 은행 연결 '+linkedBankIds.size+'건')}
 }
 function download(name,contents,type){
  const url=URL.createObjectURL(new Blob([contents],{type}));
