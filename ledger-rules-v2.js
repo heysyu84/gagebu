@@ -22,11 +22,15 @@ function location(text){
 }
 function categoryFor(scope,major,minor,merchant){
  if(scope==='windmoon'){
-   if(matches(merchant,DAISO))return ['풍월관','소모품'];
-   if(matches(merchant,CONVENIENCE))return ['풍월관','편의점'];
-   if(major==='식비'||major==='카페/간식')return ['풍월관','식비'];
-   if(matches(merchant,ONLINE))return ['풍월관','온라인 구매'];
-   return ['풍월관','운영 관련'];
+   // The owner is stored separately in scope. '풍월관' is the subcategory,
+   // while the major category describes what was purchased.
+   if(matches(merchant,DAISO))return ['쇼핑','풍월관'];
+   if(matches(merchant,CONVENIENCE))return ['편의점','풍월관'];
+   if(major==='식비'||major==='카페/간식')return ['외식/배달','풍월관'];
+   if(matches(merchant,ONLINE)||major==='온라인쇼핑')return ['쇼핑','풍월관'];
+   if(major==='교통')return ['교통비','풍월관'];
+   if(major==='의료/건강')return ['병원/약국','풍월관'];
+   return ['기타','풍월관'];
  }
  if(scope==='business'){
    if(matches(merchant,ONLINE))return ['발주',merchant.includes('쿠팡')?'쿠팡':'온라인'];
@@ -74,6 +78,11 @@ function classify(row,customRules={}){
    if(c.category)item.category=c.category;
    if(c.subcategory)item.subcategory=c.subcategory;
    if(c.ledgerType)item.ledgerType=c.ledgerType;
+   if(c.scope==='windmoon'){
+     // Legacy custom classifications could still store Windmoon as a major.
+     const cat=item.category==='풍월관'?categoryFor('windmoon',row.major,row.minor,m)[0]:item.category;
+     item.category=cat;item.subcategory='풍월관';
+   }
    return item;
  }
  if(matches(m,DAISO))return classification('windmoon',m,row.major,row.minor,'다이소 전 거래 풍월관');

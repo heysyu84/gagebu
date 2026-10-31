@@ -24,6 +24,23 @@ let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='al
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
+/* Migrate the old "풍월관 / 편의점·식비·소모품" layout without dropping the original detail. */
+const WINDMOON_OLD_MAJOR={'편의점':'편의점','식비':'외식/배달','소모품':'쇼핑','온라인 구매':'쇼핑','운영 관련':'기타'};
+function normalizeWindmoon(row){
+ if(!row||row.direction!=='expense'||row.scope!=='windmoon')return false;
+ let changed=false;
+ if(row.category==='풍월관'){
+   const oldSub=String(row.subcategory||'');
+   row.category=WINDMOON_OLD_MAJOR[oldSub]||'기타';changed=true;
+   if(oldSub&&!row.detailSubcategory&&oldSub!==row.category)row.detailSubcategory=oldSub;
+ }
+ if(!row.category){row.category='기타';changed=true}
+ if(row.subcategory!=='풍월관'){
+   if(row.subcategory&&!row.detailSubcategory)row.detailSubcategory=row.subcategory;
+   row.subcategory='풍월관';changed=true;
+ }
+ return changed;
+}
 const ledgerScope=x=>{
  if(/풍월관/.test(String(x.note||'')+' '+String(x.category||'')))return 'windmoon';
  if(x.area==='business')return 'business';
@@ -42,7 +59,7 @@ function migrateLegacy(data){
   source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),sourceRow:x.sourceRow??null,
   originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
- return entries.filter(x=>x.date.startsWith('2026-'));
+ return entries.filter(x=>x.date.startsWith('2026-')).map(x=>{normalizeWindmoon(x);return x});
 }
 
 const numInput=raw=>{
@@ -95,6 +112,11 @@ function load(){
      state={...blank(),...existing};
      if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
+     if(!state.windmoonSubcategoryMigration){
+       const migrated=state.records.reduce((n,x)=>n+(normalizeWindmoon(x)?1:0),0);
+       state.windmoonSubcategoryMigration=true;
+       save();
+     }
      hadV2=true;
    }
  }catch(err){console.warn('V2 load failed',err)}
@@ -210,8 +232,8 @@ const SHEET_CATS={
   '기타':['카드연회비','가족회비','기타']
  },
  consumption:{
-  '편의점':[],'식재료':[],'외식/배달':[],'병원/약국':[],'건강/미용':[],
-  '쇼핑':['온라인','오프라인'],'온라인쇼핑':[],'여행':[],'교통비':[],'풍월관':[],'기타':[]
+  '편의점':['풍월관'],'식재료':['풍월관'],'외식/배달':['풍월관'],'병원/약국':['풍월관'],'건강/미용':['풍월관'],
+  '쇼핑':['온라인','오프라인','풍월관'],'온라인쇼핑':['풍월관'],'여행':['풍월관'],'교통비':['풍월관'],'기타':['풍월관']
  }
 };
 const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note'];
@@ -284,6 +306,7 @@ function sheetRowFromInput(row,i){
   category,subcategory:String(row.subcategory||'').trim(),merchant,payment:String(row.payment||'').trim(),
   note:String(row.note||'').trim(),status:scope==='review'?'review':'confirmed',manual:true,
   source:'manual',sourceSheet:'시트형 직접 입력',bankKey:''};
+ normalizeWindmoon(value);
  return value;
 }
 function submitSheet(){
@@ -384,9 +407,12 @@ function sheetSelectChange(el){
  const category=tr.querySelector('[data-sheet-field="category"]')?.value||'',
        scope=tr.querySelector('[data-sheet-field="scope"]');
  if(scope&&!sheetData.rows[Number(el.dataset.sheetIndex)]?.scopeManual&&el.dataset.sheetField==='category'){
-   const nextScope=['발주','담배 발주','가게'].includes(category)?'business':category==='풍월관'?'windmoon':'personal';
+   const nextScope=['발주','담배 발주','가게'].includes(category)?'business':'personal';
    scope.value=nextScope;
  }
+ const selectedScope=scope?.value||'personal',sub=tr.querySelector('[data-sheet-field="subcategory"]');
+ if(sub&&selectedScope==='windmoon')sub.value='풍월관';
+ else if(sub&&sub.value==='풍월관'&&el.dataset.sheetField==='scope')sub.value='';
 }
 
 function recordsPage(){
@@ -644,6 +670,7 @@ function navigate(p){
 function patchRecord(id,updates){
  const row=state.records.find(x=>x.id===id);if(!row)return;
  Object.assign(row,updates);
+ normalizeWindmoon(row);
  if(row.scope==='excluded')row.status='excluded';
  else if(row.scope!=='review')row.status='confirmed';
  save();render();
@@ -737,6 +764,7 @@ async function processBank(file,range=bankImportRange){
      matchCandidate:!!match.ambiguous,manual:false
    };
    if(match.ambiguous){item.scope='review';item.status='review'}
+   normalizeWindmoon(item);
    if(item.status==='review')reviewCount++;
    all.push(item);
  }
@@ -822,6 +850,7 @@ async function importLegacy(file){
    old.payment=entry.payment;old.note=entry.note;old.sourceRow=entry.sourceRow;
    // Retain manually corrected ownership, attached bank merchant and link.
    if(old.status!=='review'){old.scope=entry.scope;old.ledgerType=entry.ledgerType}
+   normalizeWindmoon(old);
  }
  const linkedBankIds=new Set();
  for(const original of additions){
@@ -844,6 +873,7 @@ async function importLegacy(file){
    }
  }
  if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
+ for(const x of additions)normalizeWindmoon(x);
  state.records.push(...additions);
  mergeDailyLotto(dailyNew);
  mergeStoreProfits(Object.fromEntries(profitsNew));
@@ -878,6 +908,7 @@ function editRecord(id){
  f.elements.ledgerType.value=r?.ledgerType||'consumption';
  f.elements.category.value=r?.category||'';
  f.elements.subcategory.value=r?.subcategory||'';
+ if(!r?.subcategory&&r?.scope==='windmoon')f.elements.subcategory.value='풍월관';
  f.elements.note.value=r?.note||'';
  dlg.showModal();
 }
@@ -886,7 +917,8 @@ function submitEditor(f){
  const merchant=String(data.get('merchant')||'').trim();
  if(!data.get('date')||!(amt>0)||!merchant){toast('날짜·금액·거래처를 입력하세요.');return}
  const scope=String(data.get('scope')),ledgerType=String(data.get('ledgerType')),category=String(data.get('category')||'').trim();
- const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),onnuri:data.has('onnuri'),note:String(data.get('note')||''),scope,ledgerType,category:category||(scope==='windmoon'?'풍월관':'기타'),subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true};
+ const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),onnuri:data.has('onnuri'),note:String(data.get('note')||''),scope,ledgerType,category:category||'기타',subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true,direction:'expense'};
+ normalizeWindmoon(entry);
  if(editing&&editing!=='new'){const row=state.records.find(x=>x.id===editing);if(row)Object.assign(row,entry)}
  else state.records.push({...entry,id:'manual-'+uid(),direction:'expense',source:'manual',sourceSheet:'직접 입력',time:'',bankKey:''});
  $('#editor').close();save();render();toast('거래를 저장했습니다.');
@@ -942,7 +974,14 @@ function onChange(e){
    readSheetCells();const old=sheetData.date;sheetData.date=el.value;
    sheetData.rows.forEach(x=>{if(x.date===old)x.date=sheetData.date});render();
  }return}
- if(el.dataset.sheetField){const row=sheetData.rows[Number(el.dataset.sheetIndex)];if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}sheetSelectChange(el);return}
+ if(el.dataset.sheetField){const row=sheetData.rows[Number(el.dataset.sheetIndex)];if(row){row[el.dataset.sheetField]=el.value;if(el.dataset.sheetField==='scope')row.scopeManual=true;}sheetSelectChange(el);if(row&&row.scope==='windmoon'&&['scope','category'].includes(el.dataset.sheetField))row.subcategory='풍월관';return}
+ if(el.id==='edit-scope'){
+   const sub=$('#edit-subcategory');if(sub){
+     if(el.value==='windmoon')sub.value='풍월관';
+     else if(sub.value==='풍월관')sub.value='';
+   }
+   return;
+ }
  if(el.id==='sales-month'){if(isMonth(el.value)){salesMonth=el.value;render()}return}
  if(el.id==='lotto-month'){if(isMonth(el.value)){lottoMonth=el.value;render()}return}
  if(el.id==='lotto-rate'){
