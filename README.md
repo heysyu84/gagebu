@@ -2,7 +2,9 @@
 
 본 저장소는 사용자가 운영하는 편의점의 장부용이며 **WIND MOON / 풍월관 관리프로그램과 무관**합니다.
 
-공개 사이트: https://heysyu84.github.io/gagebu/
+주 사용 사이트(Cloudflare Pages): https://my-gagebu.pages.dev/
+
+예비 주소(GitHub Pages): https://heysyu84.github.io/gagebu/
 
 ## 시트형 입력
 
@@ -20,6 +22,8 @@ GitHub Pages에는 **화면 코드만** 보관합니다. 서버는 별도 Cloudf
 
 ## Work 없이 서버 설치: GitHub Actions (권장)
 
+Cloudflare Pages의 `my-gagebu` 프로젝트는 **화면 사이트**이며, 이것만으로 D1 데이터베이스가 생성되지 않습니다. 아래 작업은 별도 Worker 및 D1 서버를 배포하기 위한 단계입니다.
+
 PC에 Node.js 설치나 PowerShell 명령 입력 없이 진행하는 방법입니다. **아직 서버가 배포된 상태는 아닙니다.**
 이 저장소의 `.github/workflows/deploy-cloudflare.yml`은 소유자가 직접 실행할 때만 Cloudflare D1/Worker를 만들거나 갱신합니다.
 
@@ -31,7 +35,7 @@ PC에 Node.js 설치나 PowerShell 명령 입력 없이 진행하는 방법입�
    - `STORE_LEDGER_ADMIN_PASSWORD`: 본인만 아는 16자 이상 새 관리자 비밀번호
    - `STORE_LEDGER_SESSION_PEPPER`: 관리자 비밀번호와 **다른** 32자 이상의 무작위 비밀 문자열
 4. [Deploy private ledger API](https://github.com/heysyu84/gagebu/actions/workflows/deploy-cloudflare.yml) → **Run workflow** → `main` → Run workflow를 누릅니다.
-5. 작업이 **초록색 Success**로 끝나면 실행 로그의 `https://...workers.dev` 주소를 복사합니다. [가게부 사이트](https://heysyu84.github.io/gagebu/) → 데이터 관리 → 서버 저장에 이 주소와 관리자 비밀번호를 넣고 로그인합니다.
+5. 작업이 **초록색 Success**로 끝나면 실행 로그의 `https://...workers.dev` 주소를 복사합니다. [가게부 사이트](https://my-gagebu.pages.dev/) → 데이터 관리 → 서버 저장에 이 주소와 관리자 비밀번호를 넣고 로그인합니다.
 6. 기존 브라우저의 장부를 **JSON으로 먼저 백업**하고, 서버가 비어 있는 것을 확인한 후 처음 한 번만 서버로 올립니다. 실제 금융 데이터를 GitHub 저장소나 GitHub Secrets에 붙여넣지 마세요.
 
 **보안:** API 토큰, 관리자 비밀번호, SESSION_PEPPER는 이 채팅·공개 저장소·스크린샷에 노출하지 마세요.
