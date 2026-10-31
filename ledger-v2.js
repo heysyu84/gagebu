@@ -19,13 +19,13 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
 /* Migrate the old "풍월관 / 편의점·식비·소모품" layout without dropping the original detail. */
-const WINDMOON_OLD_MAJOR={'편의점':'편의점','식비':'외식/배달','소모품':'쇼핑','온라인 구매':'쇼핑','운영 관련':'기타'};
+const WINDMOON_OLD_MAJOR={'편의점':'생활','식비':'식비','소모품':'생활','온라인 구매':'온라인쇼핑','운영 관련':'생활'};
 function normalizeWindmoon(row){
  if(!row||row.direction!=='expense'||row.scope!=='windmoon')return false;
  let changed=false;
@@ -113,6 +113,9 @@ function load(){
      if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
      taxonomy();
+     if(!Object.prototype.hasOwnProperty.call(existing,'bankSaladBaselineVersion'))state.bankSaladBaselineVersion=0;
+     const bankMigrated=adoptBankSaladDefaults();
+     if(bankMigrated)save();
      if(!state.windmoonSubcategoryMigration){
        const migrated=state.records.reduce((n,x)=>n+(normalizeWindmoon(x)?1:0),0);
        state.windmoonSubcategoryMigration=true;
@@ -132,6 +135,9 @@ function load(){
      }
    }
  }catch(err){console.warn('Legacy load failed',err)}
+ // Also initialise a fresh browser before the user hides or renames categories,
+ // otherwise the next reload could mistakenly restore a deliberately hidden item.
+ if(state.bankSaladBaselineVersion!==2){adoptBankSaladDefaults();save()}
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
@@ -193,7 +199,8 @@ function transactionTable(items,compact=false){
  '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
   (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
   (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
- '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small></td>'+
+ '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
+ (x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
  '<td class="right amount-col">−'+won(x.amount)+'</td><td class="row-actions"><button class="row-edit" data-edit="'+E(x.id)+'">수정</button><button class="row-delete" data-delete-record="'+E(x.id)+'">삭제</button></td></tr>').join(''):
  '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
 }
@@ -209,7 +216,7 @@ function reviewCard(x,i){
  '<button data-scope="business" data-id="'+E(x.id)+'" class="choice business"><b>2</b> 편의점 매입</button>'+
  '<button data-scope="windmoon" data-id="'+E(x.id)+'" class="choice windmoon"><b>3</b> 풍월관</button>'+
  '<button data-edit="'+E(x.id)+'" class="choice secondary">세부 수정</button><button data-scope="exclude" data-id="'+E(x.id)+'" class="choice exclude">제외</button><button data-delete-record="'+E(x.id)+'" class="choice delete-choice">완전 삭제</button></div>'+
- (online?'<small class="online-help">온라인 쇼핑 거래처는 같은 곳에서도 용도가 달라집니다. 거래별로 선택합니다.</small>':'')+
+ (online?'<small class="online-help">구매처: '+E(G.platformFor(x.merchant))+' · 용도에 따라 개인 / 편의점 / 풍월관을 선택합니다.</small>':'')+
  '</div></article>';
 }
 function reviewPage(){
@@ -226,7 +233,7 @@ function reviewPage(){
 const SHEET_CATS={
  fixed:{
   '담배 발주':['KT&G','말보로','메비우스','던힐'],
-  '발주':['쿠팡','지마켓','네이버','상온','주류','미스터파크','기타'],
+  '발주':['쿠팡','지마켓','알리','11번가','네이버','옥션','SSG','롯데온','컬리','테무','오늘의집','무신사','인터파크','위메프','티몬','아이허브','29CM','온라인','상온','주류','미스터파크','기타'],
   '가게':['임대료','전기료','통신료','보안업체','가맹비','점소모품','스포츠 토토','기타'],
   '집':['월세','전기료','통신료','수도세','가스요금'],
   '보험':['KB암보험','KB주가지수','메리츠','삼성화재','KB7년의약속','기타'],
@@ -236,12 +243,47 @@ const SHEET_CATS={
   '기타':['카드연회비','가족회비','기타']
  },
  consumption:{
-  '편의점':['풍월관'],'식재료':['풍월관'],'외식/배달':['풍월관'],'병원/약국':['풍월관'],'건강/미용':['풍월관'],
-  '쇼핑':['온라인','오프라인','풍월관'],'온라인쇼핑':['풍월관'],'여행':['풍월관'],'교통비':['풍월관'],'기타':['풍월관']
+  // 13 BankSalad major groups with owner-defined simpler food/online subgroups.
+  // '풍월관' is a local ownership marker, retained for Windmoon expense records.
+  '온라인쇼핑':['쿠팡','지마켓','알리','11번가','네이버','옥션','SSG','롯데온','컬리','테무','오늘의집','무신사','인터파크','위메프','티몬','아이허브','29CM','구매처 미확인','풍월관'],
+  '생활':['편의점','마트','미분류','생필품','생활서비스','목욕','가구/가전','풍월관'],
+  '식비':['외식','배달','풍월관'],
+  '문화/여가':['스포츠','전시/관람','미분류','풍월관'],
+  '금융':['보험','이자/대출','세금/과태료','은행','카드','증권/투자','풍월관'],
+  '주거/통신':['휴대폰','전기세','가스비','인터넷','풍월관'],
+  '교통':['대중교통','택시','시외버스','풍월관'],
+  '카페/간식':['커피/음료','아이스크림/빙수','디저트/떡','기타간식','베이커리','풍월관'],
+  '의료/건강':['약국','종합병원','내과/가정의학','안과','정형외과','이비인후과','풍월관'],
+  '여행/숙박':['숙박비','항공권','여행','해외결제','풍월관'],
+  '뷰티/미용':['화장품','피부과','미분류','풍월관'],
+  '경조/선물':['기부/헌금','풍월관'],
+  '패션/쇼핑':['패션','풍월관']
  }
 };
 /* User-editable taxonomy. Stable scope/group IDs survive label renames. */
-const TAX_PAYMENT_DEFAULTS=['현금','현금/송금','계좌이체','신용카드','체크카드','온누리상품권','쿠팡 KB','신한 Hi-Point','신한 Classic Y'];
+// Exact '결제수단' labels found in the uploaded BankSalad workbook; no account numbers.
+const BANKSALAD_CARDS=['HI-POINT','쿠팡 와우 카드','The CLASSIC-Y','KB국민 톡톡 my point카드','현대카드M',
+ 'KB국민 트래블러스 체크카드_교통','KB국민 청춘대로 싱글 체크카드(RF)',
+ 'KB국민 nori 체크카드(RF)','트래블로그 체크 마스터','SOL트래블(체크)','위비트래블 체크카드'];
+const BANKSALAD_EPAY=['카카오페이 머니','카카오페이 간편결제','네이버페이 간편결제',
+ '네이버페이 간편결제(머니)','네이버페이 간편결제(포인트)',
+ '토스 간편결제','페이코 간편결제','페이코포인트','네이버페이 머니'];
+const BANKSALAD_ACCOUNTS=['KB우대저축-저축예금','KB마이핏통장','개인사업자 입출금통장',
+ '입출금통장','저금통','듀얼K  입출금통장','세이프박스','주택청약종합저축','저축예금',
+ '쏠편한 입출금통장(저축예금)','NH주거래우대통장(비대면실명확인)','WON 통장'];
+const NON_BANKSALAD_METHODS=['현금','현금/송금','계좌이체','온누리상품권'];
+const TAX_PAYMENT_DEFAULTS=[...BANKSALAD_CARDS,...BANKSALAD_EPAY,...BANKSALAD_ACCOUNTS,...NON_BANKSALAD_METHODS];
+// Remove only unused, untouched V2 placeholder presets when changing the baseline.
+const PREVIOUS_TAX_PAYMENT_DEFAULTS=['현금','현금/송금','계좌이체','신용카드','체크카드',
+ '온누리상품권','쿠팡 KB','신한 Hi-Point','신한 Classic Y'];
+const PREVIOUS_CONSUMPTION_DEFAULTS={
+ '편의점':['풍월관'],'식재료':['풍월관'],'외식/배달':['풍월관'],'병원/약국':['풍월관'],
+ '건강/미용':['풍월관'],'쇼핑':['온라인','오프라인','풍월관'],
+ '온라인쇼핑':['풍월관'],'여행':['풍월관'],'교통비':['풍월관'],'기타':['풍월관']
+};
+// Previously inherited BankSalad detail labels: no longer default dropdown choices.
+const OLD_BANKSALAD_FOOD=['식재료','한식','패스트푸드','배달','치킨','고기','중식','아시아음식','풍월관'];
+const OLD_BANKSALAD_ONLINE=['인터넷쇼핑','서비스구독','결제/충전','앱스토어','풍월관'];
 function taxonomy(){
  if(!state.taxonomy||typeof state.taxonomy!=='object'||Array.isArray(state.taxonomy))state.taxonomy=JSON.parse(JSON.stringify(SHEET_CATS));
  if(!state.taxonomyAliases||!Array.isArray(state.taxonomyAliases))state.taxonomyAliases=[];
@@ -260,13 +302,79 @@ function taxonomy(){
  if(!Array.isArray(state.hiddenPaymentMethods))state.hiddenPaymentMethods=[];
  return state.taxonomy;
 }
+/* One-time upgrade for existing V2 browsers: replace placeholders with BankSalad
+   defaults while retaining any modified/custom/used categories and payment methods.
+   This must NEVER modify manually classified historical transactions. */
+function adoptBankSaladDefaults(){
+ if(state.bankSaladBaselineVersion===2)return false;
+ const tax=taxonomy(),old=tax.consumption||{},merged={};
+ const used=new Set((state.records||[]).filter(x=>x.direction==='expense'&&x.ledgerType==='consumption'&&
+   !(x.source==='bank'&&!x.manual&&x.status==='confirmed'&&x.bankMajor)).map(x=>x.category));
+ for(const [rawMajor,subs] of Object.entries(SHEET_CATS.consumption)){
+   const major=canonicalCategory('consumption',rawMajor,'').category||rawMajor;
+   const saved=old[major]||old[rawMajor]||[];
+   const previous=Array.isArray(saved)?saved:[];
+   const deprecated=rawMajor==='식비'?OLD_BANKSALAD_FOOD:rawMajor==='온라인쇼핑'?OLD_BANKSALAD_ONLINE:[];
+   // Keep manually added detail names, but don't retain former auto-generated
+   // food-type / checkout-type defaults as selectable subcategories.
+   const past=previous.filter(x=>!deprecated.includes(x)||subs.includes(x));
+   merged[major]=[...new Set([...(merged[major]||[]),...subs,...past])];
+ }
+ for(const [major,subs] of Object.entries(old)){
+   if(major in merged)continue;
+   const baseline=PREVIOUS_CONSUMPTION_DEFAULTS[major];
+   const unchanged=Array.isArray(baseline)&&
+     JSON.stringify([...(subs||[])])===JSON.stringify(baseline);
+   // Hide only unused original presets. Custom labels and actively used labels persist.
+   if(unchanged&&!used.has(major))continue;
+   merged[major]=Array.isArray(subs)?[...subs]:[];
+ }
+ tax.consumption=merged;
+ // Offer marketplace vendors in the fixed '발주' group, too.
+ const fixedName=canonicalCategory('fixed','발주','').category||'발주';
+ if(Array.isArray(tax.fixed?.[fixedName])){
+   tax.fixed[fixedName]=[...new Set([...SHEET_CATS.fixed.발주,...tax.fixed[fixedName]])];
+ }
+ const referenced=new Set((state.records||[]).map(x=>x.payment).filter(Boolean));
+ const oldPlaceholders=new Set(PREVIOUS_TAX_PAYMENT_DEFAULTS.filter(x=>!NON_BANKSALAD_METHODS.includes(x)));
+ const extra=(state.paymentMethods||[]).filter(x=>!oldPlaceholders.has(x)||referenced.has(x));
+ state.paymentMethods=[...new Set([...TAX_PAYMENT_DEFAULTS,...extra])];
+ // Existing manual choices remain untouched. Re-categorize only bank-origin
+ // rows that were never manually confirmed, including unclassified review items.
+ for(const row of state.records||[]){
+   if(row.source!=='bank'||row.direction!=='expense'||row.ledgerType!=='consumption'||row.manual)continue;
+   if(!row.bankMajor)continue;
+   const [major,minor]=G.categoryFor(row.scope,row.bankMajor,row.bankMinor,row.merchant);
+   Object.assign(row,canonicalCategory('consumption',major,minor));
+   if(row.scope==='windmoon')row.subcategory='풍월관';
+ }
+ state.bankSaladBaselineVersion=2;
+ return true;
+}
+
+function restoreBankSaladPresets(confirmAction=true){
+ if(confirmAction&&!confirm('가게부용 소비 대분류 13개(식비: 외식/배달, 온라인쇼핑: 구매처별)와 뱅크샐러드 결제수단 32종을 목록에 추가할까요?\n직접 만든 분류와 기존 거래는 삭제하지 않습니다.'))return false;
+ const prior=JSON.stringify(state),tax=taxonomy();
+ for(const [rawMajor,subs] of Object.entries(SHEET_CATS.consumption)){
+   const major=canonicalCategory('consumption',rawMajor,'').category||rawMajor;
+   tax.consumption[major]=[...new Set([...(tax.consumption[major]||[]),...subs])];
+ }
+ state.paymentMethods=[...new Set([...(state.paymentMethods||[]),...TAX_PAYMENT_DEFAULTS])];
+ state.hiddenPaymentMethods=(state.hiddenPaymentMethods||[]).filter(x=>!TAX_PAYMENT_DEFAULTS.includes(x));
+ state.bankSaladBaselineVersion=2;
+ if(!save()){state=JSON.parse(prior);return false}
+ render();toast('뱅크샐러드 기본 소비 분류·결제수단을 복원했습니다.');
+ return true;
+}
+
 const categoriesFor=group=>taxonomy()[group]||{};
 const valueOptions=values=>values.map(s=>'<option value="'+E(s)+'"></option>').join('');
 function paymentChoices(){
  taxonomy();
  const hidden=new Set(state.hiddenPaymentMethods||[]);
  const vals=new Set([...state.paymentMethods,...state.records.map(x=>x.payment).filter(Boolean)].filter(x=>!hidden.has(x)));
- return [...vals].sort((a,b)=>a.localeCompare(b,'ko'));
+ const kind=v=>BANKSALAD_CARDS.includes(v)?0:BANKSALAD_EPAY.includes(v)?1:BANKSALAD_ACCOUNTS.includes(v)?2:3;
+ return [...vals].sort((a,b)=>kind(a)-kind(b)||a.localeCompare(b,'ko'));
 }
 function canonicalCategory(group,category,subcategory){
  let major=String(category||''),minor=String(subcategory||'');
@@ -389,16 +497,19 @@ function categoriesPage(){
   '<form class="tax-line tax-add" data-tax-action="add-major" data-tax-group="'+E(group)+'"><b>대분류</b><input name="value" maxlength="80" required placeholder="새 대분류">'+
   '<button class="btn primary" type="submit">＋ 추가</button></form></div></section>').join('');
  const paymentList=paymentChoices().map(pay=>
-  '<form class="tax-line" data-tax-action="rename-payment" data-tax-major="'+E(pay)+'"><span>결제수단</span>'+
+  '<form class="tax-line" data-tax-action="rename-payment" data-tax-major="'+E(pay)+'"><span>'+
+  (BANKSALAD_CARDS.includes(pay)?'카드':BANKSALAD_EPAY.includes(pay)?'간편결제':BANKSALAD_ACCOUNTS.includes(pay)?'계좌':'수동결제')+'</span>'+
   '<input name="value" maxlength="80" required value="'+E(pay)+'">'+
   '<button class="btn subtle" type="submit">이름 변경</button>'+
   (state.paymentMethods.includes(pay)?'<button type="button" class="btn danger-outline" data-tax-hide="hide-payment" data-tax-major="'+E(pay)+'">숨기기</button>':'')+'</form>').join('');
  return pageIntro('CATEGORY MANAGER','분류 관리','사용처·지출 종류·대분류·소분류·결제수단을 직접 관리합니다. 검색 입력에서 기존 항목을 선택하거나 새로운 이름을 저장할 수도 있습니다.')+
+ '<section class="surface bank-baseline-info"><div class="surface-head"><div><h2>뱅크샐러드 기반 기본값</h2><p>소비지출 대분류 13개 · 식비는 외식/배달만 · 온라인쇼핑은 구매처별 · 결제수단은 원본 32종 및 수동 입력 4종</p></div>'+
+ '<button type="button" class="btn subtle" id="restore-bank-presets">기본 분류 복원</button></div></section>'+
  '<div class="tax-grid"><section class="surface"><div class="surface-head"><h2>사용처</h2></div><div class="tax-body">'+labelControls(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),'rename-scope')+
  '<form class="tax-line tax-add" data-tax-action="add-scope"><b>새 사용처</b><input name="value" required maxlength="80" placeholder="사용처 추가"><button class="btn primary">＋ 추가</button></form></div></section>'+
  '<section class="surface"><div class="surface-head"><h2>지출 종류</h2></div><div class="tax-body">'+labelControls(Object.entries(GROUP),'rename-group')+
  '<form class="tax-line tax-add" data-tax-action="add-group"><b>새 지출 종류</b><input name="value" maxlength="80" required placeholder="지출 종류 추가"><button class="btn primary">＋ 추가</button></form></div></section></div>'+
- sections+'<section class="surface"><div class="surface-head"><div><h2>결제수단</h2><p>카드사 원본 결제명은 변경하지 않고, 직접 입력한 결제명만 바뀝니다.</p></div></div>'+
+ sections+'<section class="surface"><div class="surface-head"><div><h2>카드 · 결제수단</h2><p>뱅크샐러드 엑셀의 실제 카드·간편결제·계좌명을 기본으로 표시합니다. 원본 결제명은 수정하지 않습니다.</p></div></div>'+
  '<div class="tax-body">'+paymentList+'<form class="tax-line tax-add" data-tax-action="add-payment"><b>새 결제수단</b><input name="value" required maxlength="80" placeholder="결제수단 추가">'+
  '<button class="btn primary">＋ 추가</button></form></div></section>'+
  '<div class="notice"><b>원본 보존</b><p>분류 이름만 바꾸며 거래 금액은 변경되지 않습니다. 원본 카드 정보는 그대로 유지하고, 자동분류 규칙은 변경된 이름으로 연결합니다.</p></div>';
@@ -1121,7 +1232,7 @@ function resetAllV2(confirmAction=true){
    if(!confirm('최종 확인: V2 거래 '+state.records.length+'건, 토토 일별 '+(state.dailyLotto||[]).length+'건 및 설정을 모두 초기화할까요?\n기존 V1 기록은 삭제하지 않습니다.'))return false;
  }
  const previous=state;
- state={...blank(),legacyDailySynced:true,windmoonSubcategoryMigration:true,migratedFromV1:false};
+ state={...blank(),legacyDailySynced:true,bankSaladBaselineVersion:2,windmoonSubcategoryMigration:true,migratedFromV1:false};
  if(!save()){state=previous;return false}
  preview=null;lastBankFile=null;bankLoadToken++;
  taxonomy();
@@ -1195,6 +1306,7 @@ function onClick(event){
  if(target.dataset.deleteRecord){const id=target.dataset.deleteRecord;if(deleteRecordById(id)&&$('#editor')?.open)$('#editor').close();return}
  if(target.dataset.deleteLotto){deleteDailyLotto(target.dataset.deleteLotto);return}
  if(target.id==='reset-all-v2'){resetAllV2();return}
+ if(target.id==='restore-bank-presets'){restoreBankSaladPresets();return}
  if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
    readSheetCells();const count=target.id==='sheet-add-5'?5:20;
    for(let i=0;i<count&&sheetData.rows.length<sheetData.limit;i++)sheetData.rows.push(sheetNewRow());render();return

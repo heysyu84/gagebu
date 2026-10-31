@@ -1,7 +1,7 @@
 /* Gagebu v2 — deterministic classification rules. No user financial data in this file. */
 (function(global){
 'use strict';
-const ONLINE=/(?:쿠팡|쿠페이|G마켓|지마켓|11번가|11pay|네이버\s*(?:쇼핑|스토어|페이)|스마트스토어|알리익스프레스|aliexpress|테무|temu|옥션|auction|ssg|이베이|롯데온|오늘의집|무신사|마켓컬리|컬리|iherb|아이허브|인터파크|위메프|티몬|29cm)/i;
+const ONLINE=/(?:쿠팡|쿠페이|G\s*마켓|지마켓|gmarket|11번가|11pay|11st|네이버\s*(?:쇼핑|스토어)|스마트스토어|알리(?:익스프레스)?|aliexpress|테무|temu|옥션|auction|ssg|이베이|롯데온|오늘의집|무신사|마켓컬리|컬리|iherb|아이허브|인터파크|위메프|티몬|29cm)/i;
 const CONVENIENCE=/(?:^cu\s|^cu-|^cu_|씨유|이마트24|emart24|gs25|세븐일레븐|7.?eleven|미니스톱|편의점)/i;
 const DELIVERY=/(?:배달의민족|배민|요기요|쿠팡이츠|땡겨요|위메프오|배달특급)/i;
 const DAISO=/(?:다이소|아성다이소)/i;
@@ -20,29 +20,62 @@ function location(text){
  if(matches(m,OUTSIDE))return 'outside';
  return 'unknown';
 }
+// The source spreadsheet's expense taxonomy. Only the Windmoon
+// subcategory is a locally-added ownership marker, not a BankSalad label.
+const BANK_MAJOR=new Set(['온라인쇼핑','생활','식비','문화/여가','금융','주거/통신','교통','카페/간식','의료/건강','여행/숙박','뷰티/미용','경조/선물','패션/쇼핑']);
+// Online shopping subcategories are sellers, not BankSalad's generic purchase types.
+// A payment processor alone is NOT evidence that Naver was the actual seller.
+const PLATFORMS=[
+ ['쿠팡',/(?:쿠팡|쿠페이|coupang)/i],
+ ['지마켓',/(?:지마켓|G\s*마켓|gmarket|g-market)/i],
+ ['알리',/(?:알리(?:익스프레스|\s*익스)?|aliexpress|ali\s*express)/i],
+ ['11번가',/(?:11번가|11pay|11st)/i],
+ ['네이버',/(?:네이버\s*(?:쇼핑|스토어)|스마트스토어|naver\s*(?:shopping|store)|^네이버$)/i],
+ ['옥션',/(?:옥션|auction)/i],
+ ['SSG',/(?:SSG|쓱닷컴|쓱\s*배송)/i],
+ ['롯데온',/(?:롯데온|lotteon)/i],
+ ['컬리',/(?:마켓컬리|컬리|kurly)/i],
+ ['테무',/(?:테무|temu)/i],
+ ['오늘의집',/(?:오늘의집|ohou)/i],
+ ['무신사',/(?:무신사|musinsa)/i],
+ ['인터파크',/(?:인터파크|interpark)/i],
+ ['위메프',/(?:위메프|wemakeprice)/i],
+ ['티몬',/(?:티몬|tmon)/i],
+ ['아이허브',/(?:iherb|아이허브)/i],
+ ['29CM',/(?:29cm)/i]
+];
+function platformFor(merchant){
+ const name=String(merchant||'');
+ for(const [label,pattern] of PLATFORMS)if(pattern.test(name))return label;
+ return '구매처 미확인';
+}
+function diningFor(merchant,bankMinor){
+ return matches(merchant,DELIVERY)||/(?:배달|포장\s*배달)/.test(String(bankMinor||''))?'배달':'외식';
+}
 function categoryFor(scope,major,minor,merchant){
+ const bankMajor=String(major||'').trim(),bankMinor=String(minor||'').trim();
+ const delivery=matches(merchant,DELIVERY)||(bankMajor==='식비'&&/배달/.test(bankMinor));
+ const online=!delivery&&(matches(merchant,ONLINE)||bankMajor==='온라인쇼핑');
  if(scope==='windmoon'){
-   // The owner is stored separately in scope. '풍월관' is the subcategory,
-   // while the major category describes what was purchased.
-   if(matches(merchant,DAISO))return ['쇼핑','풍월관'];
-   if(matches(merchant,CONVENIENCE))return ['편의점','풍월관'];
-   if(major==='식비'||major==='카페/간식')return ['외식/배달','풍월관'];
-   if(matches(merchant,ONLINE)||major==='온라인쇼핑')return ['쇼핑','풍월관'];
-   if(major==='교통')return ['교통비','풍월관'];
-   if(major==='의료/건강')return ['병원/약국','풍월관'];
-   return ['기타','풍월관'];
+   if(delivery)return ['식비','풍월관'];
+   if(matches(merchant,DAISO)||matches(merchant,CONVENIENCE))return ['생활','풍월관'];
+   if(online)return ['온라인쇼핑','풍월관'];
+   if(BANK_MAJOR.has(bankMajor))return [bankMajor,'풍월관'];
+   return ['생활','풍월관'];
  }
  if(scope==='business'){
-   if(matches(merchant,ONLINE))return ['발주',merchant.includes('쿠팡')?'쿠팡':'온라인'];
+   if(online)return ['발주',platformFor(merchant)==='구매처 미확인'?'온라인':platformFor(merchant)];
    return ['가게','기타'];
  }
- if(major==='식비'||major==='카페/간식')return ['외식/배달',minor||''];
- if(matches(merchant,CONVENIENCE))return ['편의점',''];
- if(matches(merchant,ONLINE))return ['쇼핑','온라인'];
- if(major==='의료/건강')return ['병원/약국',''];
- if(major==='교통')return ['교통비',''];
- if(major==='생활'&&minor==='마트')return ['식재료',''];
- return ['기타',''];
+ // Consumption categories mostly follow BankSalad, with the owner's simpler
+ // two-way food split and merchant-based online shopping groups.
+ if(delivery)return ['식비','배달'];
+ if(online)return ['온라인쇼핑',platformFor(merchant)];
+ if(bankMajor==='식비')return ['식비',diningFor(merchant,bankMinor)];
+ if(BANK_MAJOR.has(bankMajor))return [bankMajor,bankMinor||'미분류'];
+ if(matches(merchant,CONVENIENCE))return ['생활','편의점'];
+ if(matches(merchant,DELIVERY))return ['식비','배달'];
+ return ['생활','미분류'];
 }
 function classification(scope,merchant,major,minor,reason,conf=1){
  const [category,subcategory]=categoryFor(scope,major,minor,merchant);
@@ -50,7 +83,8 @@ function classification(scope,merchant,major,minor,reason,conf=1){
  return {action:'keep',scope,status:'confirmed',ledgerType,category,subcategory,reason,confidence:conf};
 }
 function review(reason,merchant,major,minor,online=false){
- return {action:'keep',scope:'review',status:'review',ledgerType:'consumption',category:online?'온라인쇼핑':'미분류',subcategory:'',reason,confidence:0};
+ const [category,subcategory]=categoryFor('personal',major,minor,merchant);
+ return {action:'keep',scope:'review',status:'review',ledgerType:'consumption',category:online?'온라인쇼핑':category,subcategory:online?platformFor(merchant):subcategory,reason,confidence:0};
 }
 function skip(reason){return {action:'skip',reason}}
 function classify(row,customRules={}){
@@ -80,15 +114,17 @@ function classify(row,customRules={}){
    if(c.ledgerType)item.ledgerType=c.ledgerType;
    if(c.scope==='windmoon'){
      // Legacy custom classifications could still store Windmoon as a major.
-     const cat=item.category==='풍월관'?categoryFor('windmoon',row.major,row.minor,m)[0]:item.category;
-     item.category=cat;item.subcategory='풍월관';
+     item.category=categoryFor('windmoon',row.major,row.minor,m)[0];
+     item.subcategory='풍월관';
    }
    return item;
  }
  if(matches(m,DAISO))return classification('windmoon',m,row.major,row.minor,'다이소 전 거래 풍월관');
  if(/^(?:KTNG|KT&G)/i.test(m))return {action:'keep',scope:'business',status:'confirmed',ledgerType:'fixed',category:'담배 발주',subcategory:'KT&G',reason:'담배 매입 거래처 확인',confidence:0.95};
- if(matches(m,ONLINE)||row.major==='온라인쇼핑'&&row.minor==='인터넷쇼핑')return review('온라인 쇼핑: 개인 / 편의점 / 풍월관 선택',m,row.major,row.minor,true);
- if(matches(m,DELIVERY))return review('배달 주문은 지역 기준 풍월관 자동분류에서 제외',m,row.major,row.minor);
+ if(matches(m,DELIVERY)||(row.major==='식비'&&/배달/.test(String(row.minor||''))))
+   return review('배달 주문은 지역 기준 풍월관 자동분류에서 제외',m,row.major,row.minor);
+ if(matches(m,ONLINE)||row.major==='온라인쇼핑')
+   return review('온라인 쇼핑: 개인 / 편의점 / 풍월관 선택',m,row.major,row.minor,true);
  if(matches(m,CONVENIENCE)){
    if(n(m).includes('cu둔촌점'))return classification('personal',m,row.major,row.minor,'CU 둔촌점은 풍월관 자동분류 예외');
    const loc=location(m);
@@ -116,5 +152,5 @@ function classifyChoice(scope,row){
  const item=classification(scope,row.merchant||'',row.bankMajor||row.major,row.bankMinor||row.minor,'사용자가 직접 분류');
  return {...item,manual:true};
 }
-global.GagebuRules={classify,classifyChoice,location,normalizeMerchant:n,patterns:{ONLINE,CONVENIENCE,DELIVERY,DAISO,TOTO,INVEST,PREPAID},categoryFor};
+global.GagebuRules={classify,classifyChoice,location,normalizeMerchant:n,patterns:{ONLINE,CONVENIENCE,DELIVERY,DAISO,TOTO,INVEST,PREPAID},categoryFor,platformFor,diningFor};
 })(window);
