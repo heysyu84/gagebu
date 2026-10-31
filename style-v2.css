@@ -110,3 +110,17 @@
 
 /* Prepaid Onnuri tender flag: underlying BankSalad card remains visible for audit. */
 .onnuri-choice{display:flex;align-items:center;gap:6px;white-space:normal;cursor:pointer;font-size:11px;color:#4a7267;font-weight:710;margin:8px 0 0;line-height:1.35}.onnuri-choice input{appearance:auto;accent-color:#148b6d;width:15px;height:15px;margin:0;flex:none;cursor:pointer}.payment-col .payment-main{font-size:12px;color:#25493f;font-weight:750}.payment-col .onnuri-choice{font-weight:650;color:#4b8270}.review-main>.onnuri-choice{width:fit-content;border:1px solid #daeae2;border-radius:8px;padding:8px 11px;background:#f7fbf8;margin:8px 0 15px}.review-main>.onnuri-choice:has(input:checked){border-color:#83c8a9;background:#e8f7ee;color:#106b4f}.field.full .editor-onnuri{display:flex;align-items:center;margin:0;padding:12px;border:1px solid #dbeae1;background:#f8fcf9;border-radius:8px}.field.full .editor-onnuri input{width:17px;height:17px;min-height:0;margin:0;flex:none}.field.full .editor-onnuri span{font-size:12px;color:#3b6958}.editor-card-hint{display:block;color:#879d92;margin-top:4px}
+
+/* Individual deletion and test-data reset */
+.row-actions{white-space:nowrap;min-width:112px}.row-actions button{margin-right:5px}
+.row-delete{border:1px solid #f3d5d2;background:#fff7f5;color:#a75b55;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:750;cursor:pointer;white-space:nowrap}
+.row-delete:hover{border-color:#d99388;background:#ffedeb}
+.choice.delete-choice{background:#fff8f7;color:#a7635c;border-color:#f1d8d3}
+.btn.danger{background:#a9423b;color:white;border-color:#a9423b;font-weight:800}.btn.danger:hover{background:#8f352e;border-color:#8f352e}
+.btn.danger-outline{background:#fff9f8;color:#a3443d;border-color:#ecc6be}
+.btn.danger-outline:hover{background:#ffefec}
+.editor-actions [hidden]{display:none!important}.editor-actions .danger-outline{margin-right:auto}
+.reset-data{border-color:#efd2cb}.reset-body{padding:6px 25px 24px}.reset-body p{font-size:12px;color:#826c66;line-height:1.7;margin:13px 0 19px}
+.reset-counts{display:flex;gap:8px;flex-wrap:wrap}.reset-counts span{border:1px solid #efe4df;border-radius:8px;background:#faf7f6;padding:9px 12px;font-size:11px;color:#826d67}.reset-counts b{color:#684139}
+.lotto-day-table td:last-child{width:80px}
+@media(max-width:650px){.reset-body{padding:8px 16px 20px}.reset-body>.btn{width:100%}.editor-actions{flex-wrap:wrap}}

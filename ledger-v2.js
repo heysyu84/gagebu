@@ -19,7 +19,7 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
-const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -124,8 +124,11 @@ function load(){
    const legacy=JSON.parse(localStorage.getItem(OLD)||'null');
    if(legacy&&Array.isArray(legacy.transactions)){
      if(!hadV2){state.records=migrateLegacy(legacy);state.migratedFromV1=true;}
-     const merged=mergeDailyLotto(legacy.dailyLotto);
-     if(!hadV2||merged.added)save();
+     if(!hadV2||!state.legacyDailySynced){
+       mergeDailyLotto(legacy.dailyLotto);
+       state.legacyDailySynced=true;
+       save();
+     }
    }
  }catch(err){console.warn('Legacy load failed',err)}
 }
@@ -190,7 +193,7 @@ function transactionTable(items,compact=false){
   (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
   (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
  '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small></td>'+
- '<td class="right amount-col">−'+won(x.amount)+'</td><td><button class="row-edit" data-edit="'+E(x.id)+'">수정</button></td></tr>').join(''):
+ '<td class="right amount-col">−'+won(x.amount)+'</td><td class="row-actions"><button class="row-edit" data-edit="'+E(x.id)+'">수정</button><button class="row-delete" data-delete-record="'+E(x.id)+'">삭제</button></td></tr>').join(''):
  '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
 }
 function reviewCard(x,i){
@@ -204,7 +207,7 @@ function reviewCard(x,i){
  '<div class="review-choices"><button data-scope="personal" data-id="'+E(x.id)+'" class="choice personal"><b>1</b> 개인 소비</button>'+
  '<button data-scope="business" data-id="'+E(x.id)+'" class="choice business"><b>2</b> 편의점 매입</button>'+
  '<button data-scope="windmoon" data-id="'+E(x.id)+'" class="choice windmoon"><b>3</b> 풍월관</button>'+
- '<button data-edit="'+E(x.id)+'" class="choice secondary">세부 수정</button><button data-scope="exclude" data-id="'+E(x.id)+'" class="choice exclude">제외</button></div>'+
+ '<button data-edit="'+E(x.id)+'" class="choice secondary">세부 수정</button><button data-scope="exclude" data-id="'+E(x.id)+'" class="choice exclude">제외</button><button data-delete-record="'+E(x.id)+'" class="choice delete-choice">완전 삭제</button></div>'+
  (online?'<small class="online-help">온라인 쇼핑 거래처는 같은 곳에서도 용도가 달라집니다. 거래별로 선택합니다.</small>':'')+
  '</div></article>';
 }
@@ -536,7 +539,7 @@ function salesPage(){
     '<div class="sales-profit-preview"><span>일별 수수료 '+lottoDays.length+'일 합계</span><strong>'+won(lottoDaySum)+'</strong></div>'+
     '<button type="button" class="btn subtle wide" data-nav="lotto">일별 판매액·수수료 입력 →</button>')+
    '<label class="sales-input-label">정산 메모 (선택)</label><input type="text" name="note" value="'+E(x.record?.note||'')+'" placeholder="POS 마감 메모">'+
-   '<button class="btn primary wide" type="submit" '+(x.count>1?'disabled':'')+'>'+(x.count===1?'✓ 수정 저장':'＋ 등록')+' <span>→</span></button></form>';
+   '<button class="btn primary wide" type="submit" '+(x.count>1?'disabled':'')+'>'+(x.count===1?'✓ 수정 저장':'＋ 등록')+' <span>→</span></button>'+ (x.count===1?'<button type="button" class="btn danger-outline wide" data-delete-record="'+E(x.record.id)+'">이 달 매출 삭제</button>':'')+'</form>';
  }).join('');
  const table=Array.from({length:12},(_,i)=>{
    const month=year+'-'+String(i+1).padStart(2,'0'),a=salesValue(month,'store'),b=salesValue(month,'lotto'),p=storedProfit(month);
@@ -586,7 +589,7 @@ function lottoPage(){
    return '<tr data-lotto-date="'+date+'"'+(pause?' class="lotto-pause"':'')+'><td><b>'+String(i+1).padStart(2,'0')+'일</b><small>'+date+'</small>'+
     (pause?'<span class="lotto-pause-tag">발매 중단</span>':'')+'</td>'+
     '<td><input data-lotto-input="handle" type="text" inputmode="numeric" aria-label="'+date+' 판매액" value="'+(x?E(x.handle.toLocaleString('ko-KR')):'')+'" placeholder="판매액"></td>'+
-    '<td><input data-lotto-input="commission" type="text" inputmode="numeric" aria-label="'+date+' 수수료" value="'+(x?E(x.commission.toLocaleString('ko-KR')):'')+'" placeholder="예상 자동계산"></td></tr>';
+    '<td><input data-lotto-input="commission" type="text" inputmode="numeric" aria-label="'+date+' 수수료" value="'+(x?E(x.commission.toLocaleString('ko-KR')):'')+'" placeholder="예상 자동계산"></td><td>'+(x?'<button type="button" class="row-delete" data-delete-lotto="'+date+'">삭제</button>':'—')+'</td></tr>';
  }).join('');
  return pageIntro('LOTTO DAILY','토토 일별 매출','2026년 4월 14~20일 발매 중단은 정상 0원 기록입니다. 일별 판매액과 실제 수수료를 입력하고, 월 확정 수수료와 대조합니다.',
  '<label class="sales-month-control">입력 월 <input id="lotto-month" type="month" value="'+month+'"></label>')+
@@ -598,7 +601,7 @@ function lottoPage(){
  '<div><span>대조 상태</span><strong>'+(confirmed.count>1?'중복 확인 필요':confirmed.count===0?'미확정':dayTotal===confirmed.amount?'일치':'차이 확인')+'</strong></div></div>'+
  '<section class="surface"><div class="surface-head"><div><h2>'+month+' 판매액·수수료 입력</h2><p>실제 수수료가 비어 있으면 예상 비율로 계산하며, 기존 실제 입력값은 덮어쓰지 않습니다.</p></div>'+
  '<label class="lotto-rate">예상 수수료율 (%) <input id="lotto-rate" type="number" min="0" max="100" step="0.001" value="'+E(String(state.lottoRatePct??5.97))+'"></label></div>'+
- '<form id="lotto-daily-form"><div class="table-scroll"><table class="records-table lotto-day-table"><thead><tr><th>날짜</th><th>판매액 (원)</th><th>실제 수수료 (원)</th></tr></thead><tbody>'+
+ '<form id="lotto-daily-form"><div class="table-scroll"><table class="records-table lotto-day-table"><thead><tr><th>날짜</th><th>판매액 (원)</th><th>실제 수수료 (원)</th><th>관리</th></tr></thead><tbody>'+
  entries+'</tbody></table></div><div class="lotto-form-actions"><span>빈 날짜는 변경하지 않습니다. 0원은 정상 기록으로 저장 가능합니다.</span>'+
  '<button class="btn primary" type="submit">✓ 일별 기록 저장</button></div></form></section>'+
  '<section class="surface"><div class="surface-head"><div><h2>월 확정 수수료</h2><p>일별 수수료를 월 수입으로 확정합니다. 일별 판매액 전체는 수입에 포함하지 않습니다.</p></div></div>'+
@@ -650,6 +653,13 @@ function settingsPage(){
  '<div class="surface settings-box"><div class="surface-head"><div><h2>연결 상태</h2><p>Cloudflare D1 서버는 아직 연결하지 않았습니다.</p></div></div>'+
  '<div class="summary-line"><span>저장 방식</span><strong>현재 브라우저</strong></div><div class="summary-line"><span>거래내역</span><strong>'+state.records.length.toLocaleString('ko-KR')+'건</strong></div><div class="summary-line"><span>금융 파일 가져오기</span><strong>'+state.imports.length+'회</strong></div><div class="summary-line"><span>기존 가게부 v1</span><strong>별도 보존</strong></div>'+
  '<a class="text-link" href="./legacy.html">이전 가게부 화면 열기 ↗</a></div></section>'+
+ '<section class="surface reset-data"><div class="surface-head"><div><h2>연습용 데이터 초기화</h2><p>현재 브라우저에 저장된 V2 데이터만 삭제합니다. V1 원본은 변경하지 않습니다.</p></div></div>'+
+ '<div class="reset-body"><div class="reset-counts"><span>거래 <b>'+state.records.length.toLocaleString('ko-KR')+'건</b></span>'+
+ '<span>토토 일별 <b>'+(state.dailyLotto||[]).length.toLocaleString('ko-KR')+'건</b></span>'+
+ '<span>편의점 순이익 <b>'+Object.keys(state.storeProfits||{}).length.toLocaleString('ko-KR')+'개월</b></span>'+
+ '<span>가져오기 <b>'+state.imports.length.toLocaleString('ko-KR')+'회</b></span></div>'+
+ '<p>거래·월매출·토토 일별 기록·온누리 결제 체크·직접 분류 규칙·가져오기 이력을 모두 초기화합니다. 중요한 자료는 JSON으로 먼저 백업하세요.</p>'+
+ '<button type="button" class="btn danger" id="reset-all-v2">V2 전체 데이터 삭제</button></div></section>'+
  '<div class="notice"><b>서버 전환 준비</b><p>현재 버전은 로컬 데이터 모델을 독립적으로 관리합니다. 향후 Workers + D1 구축 시 저장 어댑터만 전환하도록 분리했습니다. 아직 자동 동기화가 된다고 표시하지 않습니다.</p></div>';
 }
 function render(){
@@ -892,11 +902,56 @@ function exportCSV(){
  const enc=x=>'"'+String(x??'').replaceAll('"','""')+'"';
  download('가게부_V2_거래내역_'+now()+'.csv','\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n'),'text/csv;charset=utf-8');
 }
+/* Explicit deletion operations. Never mutate V1 localStorage or source files.
+   Storage is committed before UI acknowledges removal. */
+function deleteRecordById(id,confirmAction=true){
+ const row=state.records.find(x=>x.id===id);
+ if(!row)return false;
+ const isIncome=row.direction==='income';
+ const label=(row.merchant||row.category||'거래')+' / '+row.date+' / '+won(row.amount);
+ if(confirmAction&&!confirm(label+'\n\n이 기록을 완전히 삭제할까요? 미분류/제외 처리가 아닌 실제 삭제입니다.'))return false;
+ const before=state;
+ const records=state.records.filter(x=>x.id!==id);
+ if(records.length===state.records.length)return false;
+ const profits={...(state.storeProfits||{})};
+ if(isIncome&&row.category==='가게 매출'&&!records.some(x=>x.direction==='income'&&x.category==='가게 매출'&&x.date.slice(0,7)===row.date.slice(0,7)))delete profits[row.date.slice(0,7)];
+ state={...state,records,storeProfits:profits};
+ if(!save()){state=before;return false}
+ preview=null;render();toast('기록 1건을 삭제했습니다.');
+ return true;
+}
+function deleteDailyLotto(date,confirmAction=true){
+ const original=state.dailyLotto||[];
+ const record=original.find(x=>x.date===date);
+ if(!record)return false;
+ if(confirmAction&&!confirm(date+' 토토 일별 매출 및 수수료를 삭제할까요?\n이미 확정한 월 수수료는 그대로 유지됩니다.'))return false;
+ const before=state;
+ state={...state,dailyLotto:original.filter(x=>x.date!==date),legacyDailySynced:true};
+ if(!save()){state=before;return false}
+ render();toast(date+' 토토 일별 기록을 삭제했습니다.');
+ return true;
+}
+function resetAllV2(confirmAction=true){
+ if(confirmAction){
+   const entry=prompt('V2의 모든 연습 기록과 사용자 규칙을 삭제합니다. 복구하려면 별도 JSON 백업이 필요합니다.\n진행하려면 정확히 "전체삭제"를 입력하세요.','');
+   if(entry!=='전체삭제')return false;
+   if(!confirm('최종 확인: V2 거래 '+state.records.length+'건, 토토 일별 '+(state.dailyLotto||[]).length+'건 및 설정을 모두 초기화할까요?\n기존 V1 기록은 삭제하지 않습니다.'))return false;
+ }
+ const previous=state;
+ state={...blank(),legacyDailySynced:true,windmoonSubcategoryMigration:true,migratedFromV1:false};
+ if(!save()){state=previous;return false}
+ preview=null;lastBankFile=null;bankLoadToken++;
+ editing=null;sheetData.rows=[];sheetData.date=now();period='all';scopeFilter='all';typeFilter='all';q='';offset=0;reviewOffset=0;salesMonth=ym();lottoMonth=ym();
+ render();toast('V2 데이터가 초기화됐습니다. 기존 V1 저장 기록은 유지됩니다.');
+ return true;
+}
+
 function editRecord(id){
  const r=id?state.records.find(x=>x.id===id):null;
  editing=id||'new';
  const dlg=$('#editor');
  $('#editor-title').textContent=r?'거래 수정':'거래 직접 입력';
+ const del=$('#editor-delete-record');if(del){del.hidden=!r;del.dataset.deleteRecord=r?.id||''}
  const f=$('#editor-form');
  f.elements.date.value=r?.date||now();
  f.elements.amount.value=r?.amount??'';
@@ -928,6 +983,9 @@ function onClick(event){
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
+ if(target.dataset.deleteRecord){const id=target.dataset.deleteRecord;if(deleteRecordById(id)&&$('#editor')?.open)$('#editor').close();return}
+ if(target.dataset.deleteLotto){deleteDailyLotto(target.dataset.deleteLotto);return}
+ if(target.id==='reset-all-v2'){resetAllV2();return}
  if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
    readSheetCells();const count=target.id==='sheet-add-5'?5:20;
    for(let i=0;i<count&&sheetData.rows.length<sheetData.limit;i++)sheetData.rows.push(sheetNewRow());render();return
