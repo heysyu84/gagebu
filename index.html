@@ -1,37 +1,65 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0c1721">
-  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#122c35">
+  <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="referrer" content="no-referrer">
-  <title>가게부 · 사업과 생활을 한눈에</title>
-  <link rel="stylesheet" href="./style.css?v=20261031-expense-types-v4">
+  <title>가게부 | Money Desk</title>
+  <meta name="description" content="개인 · 편의점 · 풍월관 지출을 구분하는 로컬 가계부.">
+  <link rel="stylesheet" href="./style-v2.css?v=20261101-a">
 </head>
 <body>
-<div class="app-shell">
-  <aside class="sidebar" id="sidebar">
-    <a class="brand" href="#dashboard" aria-label="가게부 홈"><span class="brand-icon">₩</span><span class="brand-words">가게부 <small>STORE LEDGER</small></span></a>
-    <div class="nav-label">OVERVIEW</div>
-    <nav class="nav-links" aria-label="주요 메뉴">
-      <button data-page="dashboard" class="nav-link active"><span class="nav-ico">◫</span> 대시보드</button>
-      <button data-page="transactions" class="nav-link"><span class="nav-ico">≡</span> 거래내역</button>
-      <button data-page="sheet" class="nav-link"><span class="nav-ico">▦</span> 시트형 일괄 입력</button><button data-page="quick" class="nav-link"><span class="nav-ico">＋</span> 개별 입력</button>
-      <div class="nav-label nav-inner">MORE TOOLS</div>
-      <button data-page="lotto" class="nav-link"><span class="nav-ico">◎</span> 토토 매출상세</button>
-      <button data-page="analysis" class="nav-link"><span class="nav-ico">▥</span> 지출 분석</button>
-      <button data-page="recurring" class="nav-link"><span class="nav-ico">↻</span> 반복 지출</button>
-      <button data-page="data" class="nav-link"><span class="nav-ico">⚙</span> 데이터 관리</button>
+<div class="shell">
+  <aside class="sidebar" id="sidebar" aria-label="가게부 메뉴">
+    <a class="logo" href="#dashboard" data-nav="dashboard" aria-label="가게부 대시보드">
+      <span class="logo-mark">₩</span>
+      <span class="logo-type">가게부 <small>MONEY DESK</small></span>
+    </a>
+    <div class="sidebar-section">WORKSPACE</div>
+    <nav class="nav-stack">
+      <button class="nav-link active" data-nav="dashboard"><span class="nav-icon">▦</span> 전체 요약</button>
+      <button class="nav-link" data-nav="records"><span class="nav-icon">≡</span> 전체 거래내역</button>
+      <button class="nav-link" data-nav="review"><span class="nav-icon">◉</span> 미분류 검토함 <span class="nav-pill" id="review-count" hidden></span></button>
+      <button class="nav-link" data-nav="import"><span class="nav-icon">⇧</span> 거래 가져오기</button>
     </nav>
-    <div class="sidebar-bottom"><span class="privacy-dot"></span><span>로컬 저장 · 서버 연동 가능</span><small>서버 연결 시 여러 기기 동기화</small></div>
+    <div class="sidebar-section nav-gap">SETTINGS</div>
+    <nav class="nav-stack">
+      <button class="nav-link" data-nav="rules"><span class="nav-icon">◇</span> 자동 분류 기준</button>
+      <button class="nav-link" data-nav="settings"><span class="nav-icon">⚙</span> 데이터 · 설정</button>
+    </nav>
+    <div class="sidebar-foot"><b>PRIVATE WORKSPACE</b><p>은행 엑셀은 외부로 전송하지 않고 이 브라우저에서만 분석합니다.</p></div>
   </aside>
-  <div class="main-area">
-    <header class="topbar"><button class="menu-toggle" id="menu-toggle" aria-label="메뉴 열기">☰</button><div class="breadcrumb"><span class="crumb-muted">편의점 · 개인 장부</span><span class="crumb-arrow">/</span><strong id="section-title">대시보드</strong></div><div class="top-actions"><span class="local-badge"><span class="privacy-dot"></span> 로컬 보관</span><button class="btn btn-primary btn-small" data-page="sheet">＋ 시트 입력</button></div></header>
-    <main id="content" class="content" aria-live="polite"></main>
+  <div class="main">
+    <header class="topbar">
+      <div class="top-left"><button id="mobile-menu" class="menu-toggle" aria-label="메뉴 열기">☰</button><div class="crumb"><span>GAGEBU</span><span class="sep">/</span><strong id="page-title">전체 요약</strong></div></div>
+      <div class="top-right"><div class="top-privacy"><span class="privacy-icon">●</span><span id="save-indicator">로컬 저장</span></div><button class="btn primary" data-nav="import">＋ 가져오기</button></div>
+    </header>
+    <main class="content" id="content" aria-live="polite"></main>
   </div>
 </div>
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="./app.js?v=20261031-expense-types-v4" defer></script>
+<dialog class="editor" id="editor" aria-labelledby="editor-title">
+  <div class="editor-head"><h2 id="editor-title">거래 수정</h2><button class="editor-close" id="close-editor" type="button" aria-label="닫기">×</button></div>
+  <form class="editor-form" id="editor-form">
+    <div class="editor-grid">
+      <div class="field"><label for="edit-date">날짜</label><input id="edit-date" name="date" type="date" required></div>
+      <div class="field"><label for="edit-amount">금액 (원)</label><input id="edit-amount" name="amount" type="number" min="1" step="1" required></div>
+      <div class="field full"><label for="edit-merchant">거래처 / 받는 곳</label><input id="edit-merchant" name="merchant" type="text" placeholder="원본 거래처명 입력" required></div>
+      <div class="field"><label for="edit-scope">사용처</label><select id="edit-scope" name="scope"><option value="personal">개인</option><option value="business">편의점</option><option value="windmoon">풍월관</option></select></div>
+      <div class="field"><label for="edit-group">지출 종류</label><select id="edit-group" name="ledgerType"><option value="consumption">소비지출</option><option value="fixed">고정지출</option></select></div>
+      <div class="field"><label for="edit-category">대분류</label><input id="edit-category" name="category" placeholder="예: 발주, 쇼핑, 풍월관"></div>
+      <div class="field"><label for="edit-subcategory">소분류</label><input id="edit-subcategory" name="subcategory" placeholder="예: 쿠팡, 식비"></div>
+      <div class="field full"><label for="edit-payment">결제수단</label><input id="edit-payment" name="payment" placeholder="카드 또는 계좌명"></div>
+      <div class="field full"><label for="edit-note">메모</label><textarea id="edit-note" name="note" placeholder="선택 · 결제 목적 등을 기록"></textarea></div>
+    </div>
+    <div class="editor-actions"><button class="btn" type="button" id="close-editor-secondary" onclick="document.getElementById('editor').close()">취소</button><button class="btn primary" type="submit">거래 저장</button></div>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="./vendor/jszip.min.js" defer></script>
+<script src="./bank-xlsx-v2.js?v=20261101-a" defer></script>
+<script src="./ledger-rules-v2.js?v=20261101-a" defer></script>
+<script src="./ledger-v2.js?v=20261101-a" defer></script>
 </body>
 </html>

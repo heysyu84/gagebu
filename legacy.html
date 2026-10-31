@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0c1721">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>가게부 · 사업과 생활을 한눈에</title>
+  <link rel="stylesheet" href="./style.css?v=20261031-expense-types-v4">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#dashboard" aria-label="가게부 홈"><span class="brand-icon">₩</span><span class="brand-words">가게부 <small>STORE LEDGER</small></span></a>
+    <div class="nav-label">OVERVIEW</div>
+    <nav class="nav-links" aria-label="주요 메뉴">
+      <button data-page="dashboard" class="nav-link active"><span class="nav-ico">◫</span> 대시보드</button>
+      <button data-page="transactions" class="nav-link"><span class="nav-ico">≡</span> 거래내역</button>
+      <button data-page="sheet" class="nav-link"><span class="nav-ico">▦</span> 시트형 일괄 입력</button><button data-page="quick" class="nav-link"><span class="nav-ico">＋</span> 개별 입력</button>
+      <div class="nav-label nav-inner">MORE TOOLS</div>
+      <button data-page="lotto" class="nav-link"><span class="nav-ico">◎</span> 토토 매출상세</button>
+      <button data-page="analysis" class="nav-link"><span class="nav-ico">▥</span> 지출 분석</button>
+      <button data-page="recurring" class="nav-link"><span class="nav-ico">↻</span> 반복 지출</button>
+      <button data-page="data" class="nav-link"><span class="nav-ico">⚙</span> 데이터 관리</button>
+    </nav>
+    <div class="sidebar-bottom"><span class="privacy-dot"></span><span>로컬 저장 · 서버 연동 가능</span><small>서버 연결 시 여러 기기 동기화</small></div>
+  </aside>
+  <div class="main-area">
+    <header class="topbar"><button class="menu-toggle" id="menu-toggle" aria-label="메뉴 열기">☰</button><div class="breadcrumb"><span class="crumb-muted">편의점 · 개인 장부</span><span class="crumb-arrow">/</span><strong id="section-title">대시보드</strong></div><div class="top-actions"><span class="local-badge"><span class="privacy-dot"></span> 로컬 보관</span><button class="btn btn-primary btn-small" data-page="sheet">＋ 시트 입력</button></div></header>
+    <main id="content" class="content" aria-live="polite"></main>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="./app.js?v=20261031-expense-types-v4" defer></script>
+</body>
+</html>
