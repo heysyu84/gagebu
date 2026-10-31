@@ -16,12 +16,7 @@
   // 원본 쇼핑 3건은 날짜·금액·메모·결제수단 그대로 유지합니다.
   const upgrade = data => {
     let changed=false;
-    const sourceIds=new Set(['sp-541','sp-597','sp-611']);
     for(const x of data.transactions||[]){
-      if(sourceIds.has(x.id) && x.category==='쇼핑' && x.note==='풍월관'
-        && ['expense','advance'].includes(x.kind)){
-        if(x.kind!=='expense'||x.area!=='personal'){x.kind='expense';x.area='personal';changed=true}
-      }
       if(x.kind==='advance'){
         x.kind='expense';if(x.area==='receivable')x.area='personal';changed=true;
       } else if(x.kind==='repayment'){
@@ -141,9 +136,9 @@
   const dataPage=()=>{
     const review=sorted(db.transactions.filter(x=>x.area==='review'));const months=availableMonths();const incomeDiff=[];
     for(const m of months){const posted=sum(db.transactions.filter(x=>x.kind==='income'&&x.category==='토토 수수료'&&monthOf(x)===m));const daily=sum(db.dailyLotto.filter(x=>monthOf(x)===m),x=>x.commission);if(daily>0&&posted>0&&daily!==posted)incomeDiff.push({m,posted,daily})}
-    return intro('DATA & SAFETY','데이터 관리','백업은 사용자가 직접 보관합니다. 사이트 서버로 장부 데이터가 전송되지는 않습니다.')+`<div class="comparison"><section class="panel"><header class="panel-head"><div><h2>이관 · 복원</h2><p>구글 시트에서 추출한 전용 JSON 파일 또는 이 사이트에서 내려받은 백업 파일</p></div></header><div class="panel-body"><div class="file-drop"><strong>JSON 파일 불러오기</strong><p class="small-muted">기존 가게부 이관 파일을 선택하세요.</p><input id="import-file" type="file" accept="application/json,.json"></div><div class="soft-bg"><div class="kpi-pair"><label>원장 거래</label><strong>${fmt(db.transactions.length)}건</strong></div><div class="kpi-pair"><label>토토 일별 기록</label><strong>${fmt(db.dailyLotto.length)}건</strong></div><div class="kpi-pair"><label>분류 검토 필요</label><strong>${review.length}건</strong></div><div class="kpi-pair"><label>데이터 기준</label><strong>${esc(db.exportedAt||'직접 입력')}</strong></div></div></div></section><section class="panel"><header class="panel-head"><div><h2>백업 · 내보내기</h2><p>기기 변경과 브라우저 데이터 삭제에 대비하세요.</p></div></header><div class="panel-body"><div class="form-actions" style="margin-top:0"><button class="btn btn-primary" id="json-export">↓ JSON 전체 백업</button><button class="btn" id="csv-export">↓ CSV 거래 추출</button></div><div class="note-box mt-10"><h3>민감한 장부는 공개 업로드하지 않습니다</h3><p>이 사이트의 코드만 공개됩니다. 거래 자료는 브라우저 저장소에 남으므로 공용 PC나 공유 브라우저에서는 사용하지 마세요. 브라우저 초기화나 다른 기기 접속 시 자동으로 복원되지 않습니다.</p></div><div class="note-box mt-10"><h3>원본 시트 보존</h3><p>구글 스프레드시트의 기존 기록과 수식은 수정하지 않았습니다. 이관은 별도 사본 데이터로 이루어졌습니다.</p></div><button class="btn btn-danger mt-10" id="wipe">이 기기 장부 초기화</button></div></section></div>`+
+    return intro('DATA & SAFETY','데이터 관리','백업은 사용자가 직접 보관합니다. 사이트 서버로 장부 데이터가 전송되지는 않습니다.')+`<div class="comparison"><section class="panel"><header class="panel-head"><div><h2>이관 · 복원</h2><p>구글 시트에서 추출한 전용 JSON 파일 또는 이 사이트에서 내려받은 백업 파일</p></div></header><div class="panel-body"><div class="file-drop"><strong>JSON 파일 불러오기</strong><p class="small-muted">기존 가게부 이관 파일을 선택하세요.</p><label class="small-muted" for="import-mode" style="display:block;margin-top:8px">불러오기 방식</label><select id="import-mode" class="select" style="width:100%;max-width:480px;margin:5px 0 10px"><option value="merge">최신 시트 갱신 · 사이트 직접 입력 보존</option><option value="replace">전체 교체 · JSON 백업 복원</option></select><input id="import-file" type="file" accept="application/json,.json"><p class="small-muted" style="margin-top:8px">시트에서 가져온 거래는 최신 파일로 갱신하고, 사이트 직접 입력 거래는 보존합니다. 기존 시트 거래를 사이트에서 별도로 수정했다면 먼저 백업하세요.</p></div><div class="soft-bg"><div class="kpi-pair"><label>원장 거래</label><strong>${fmt(db.transactions.length)}건</strong></div><div class="kpi-pair"><label>토토 일별 기록</label><strong>${fmt(db.dailyLotto.length)}건</strong></div><div class="kpi-pair"><label>분류 검토 필요</label><strong>${review.length}건</strong></div><div class="kpi-pair"><label>데이터 기준</label><strong>${esc(db.exportedAt||'직접 입력')}</strong></div></div></div></section><section class="panel"><header class="panel-head"><div><h2>백업 · 내보내기</h2><p>기기 변경과 브라우저 데이터 삭제에 대비하세요.</p></div></header><div class="panel-body"><div class="form-actions" style="margin-top:0"><button class="btn btn-primary" id="json-export">↓ JSON 전체 백업</button><button class="btn" id="csv-export">↓ CSV 거래 추출</button></div><div class="note-box mt-10"><h3>민감한 장부는 공개 업로드하지 않습니다</h3><p>이 사이트의 코드만 공개됩니다. 거래 자료는 브라우저 저장소에 남으므로 공용 PC나 공유 브라우저에서는 사용하지 마세요. 브라우저 초기화나 다른 기기 접속 시 자동으로 복원되지 않습니다.</p></div><div class="note-box mt-10"><h3>원본 시트 보존</h3><p>구글 스프레드시트의 기존 기록과 수식은 수정하지 않았습니다. 이관은 별도 사본 데이터로 이루어졌습니다.</p></div><button class="btn btn-danger mt-10" id="wipe">이 기기 장부 초기화</button></div></section></div>`+
     (incomeDiff.length?`<div class="banner danger">토토 일별 합계와 월별 확정 수입이 다른 달이 ${incomeDiff.length}개 있습니다: ${incomeDiff.map(x=>esc(x.m)).join(', ')}</div>`:'')+
-    (review.length?`<section class="panel"><header class="panel-head"><div><h2>분류 확인 필요 · ${review.length}건</h2><p>종합소득세·지방세 등 편의점과 개인 중 하나로 단정하기 어려운 항목입니다. 풍월관 쇼핑 기록은 개인 지출로 분류했습니다.</p></div></header><div class="data-table-wrap"><table class="data-table"><thead><tr><th>날짜</th><th>분류</th><th>메모</th><th class="right">금액</th><th>대상 장부 변경</th></tr></thead><tbody>${review.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.category)} ${esc(x.subcategory||'')}</td><td class="memo">${esc(x.note||'—')}</td><td class="right">${won(x.amount)}</td><td><div class="row-actions" style="justify-content:flex-start"><button class="btn btn-small" data-classify="${esc(x.id)}" data-area="business">사업</button><button class="btn btn-small" data-classify="${esc(x.id)}" data-area="personal">개인</button><button class="btn-plain" data-edit="${esc(x.id)}">상세</button></div></td></tr>`).join('')}</tbody></table></div></section>`:'')+`<div class="footer-note">구글 시트: ${esc(db.sourceTitle||'가계부 2026')} · 이관 데이터 포맷: ${esc(db.schema||'store-ledger-v1')}</div>`;
+    (review.length?`<section class="panel"><header class="panel-head"><div><h2>분류 확인 필요 · ${review.length}건</h2><p>종합소득세·지방세 등 편의점과 개인 중 하나로 단정하기 어려운 항목입니다. 원본 시트의 과거 거래 정정은 이관 파일에 반영됩니다. 같은 상호의 새 거래는 자동 변경되지 않습니다.</p></div></header><div class="data-table-wrap"><table class="data-table"><thead><tr><th>날짜</th><th>분류</th><th>메모</th><th class="right">금액</th><th>대상 장부 변경</th></tr></thead><tbody>${review.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.category)} ${esc(x.subcategory||'')}</td><td class="memo">${esc(x.note||'—')}</td><td class="right">${won(x.amount)}</td><td><div class="row-actions" style="justify-content:flex-start"><button class="btn btn-small" data-classify="${esc(x.id)}" data-area="business">사업</button><button class="btn btn-small" data-classify="${esc(x.id)}" data-area="personal">개인</button><button class="btn-plain" data-edit="${esc(x.id)}">상세</button></div></td></tr>`).join('')}</tbody></table></div></section>`:'')+`<div class="footer-note">구글 시트: ${esc(db.sourceTitle||'가계부 2026')} · 이관 데이터 포맷: ${esc(db.schema||'store-ledger-v1')}</div>`;
   };
   const views={dashboard,transactions,quick,lotto:lottoPage,analysis,recurring,data:dataPage};
   const render=()=>{document.title=`${NAV[page]} · 가게부`;document.querySelector('#section-title').textContent=NAV[page];document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n.dataset.page===page));document.querySelector('#content').innerHTML=views[page]();document.querySelector('#sidebar').classList.remove('open');if(page==='quick')setTimeout(()=>document.querySelector('#tx-money')?.focus(),30)};
@@ -151,7 +146,45 @@
   const download=(name,body,type='application/json;charset=utf-8')=>{const blob=new Blob([body],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)};
   const exportJSON=()=>download(`가게부_백업_${ymd()}.json`,JSON.stringify({...db,backupAt:new Date().toISOString()},null,2));
   const exportCSV=()=>{const cols=['date','kind','area','category','subcategory','amount','payment','note','sourceSheet','sourceRow'];const csv=[['날짜','유형','구분','대분류','소분류','금액','결제수단','메모','원본시트','원본행'].join(','),...sorted(current()).map(x=>cols.map(k=>{let v=x[k]??'';if(k==='kind')v=labelKind(v);if(k==='area')v=labelArea(v);return `"${String(v).replaceAll('"','""')}"`}).join(','))].join('\r\n');download(`가게부_거래내역_${period==='all'?'2026':period}.csv`,'\ufeff'+csv,'text/csv;charset=utf-8')};
-  const importJSON=async file=>{if(!file)return;let o;try{o=JSON.parse(await file.text())}catch(e){toast('JSON을 읽지 못했습니다.');return}if(o.schema!=='store-ledger-v1'||!Array.isArray(o.transactions)||!Array.isArray(o.dailyLotto)){toast('가게부 백업 형식이 아닙니다.');return}if(o.transactions.some(x=>!x.id||!/^\d{4}-\d{2}-\d{2}$/.test(x.date)||!Number.isFinite(Number(x.amount))||Number(x.amount)<0)){toast('일부 거래의 날짜/금액이 올바르지 않습니다.');return}const label=`원장 ${o.transactions.length}건, 토토 일별 ${o.dailyLotto.length}건`;if(db.transactions.length){if(!confirm(`${label}을 가져옵니다.\n현재 이 브라우저에 저장된 장부를 교체합니다. 먼저 JSON 백업을 권장합니다. 계속할까요?`))return}else if(!confirm(`${label}을 이 브라우저에 이관하시겠습니까?`))return;const before=db;db={...empty(),...o};upgrade(db);if(!save()){db=before;return}period='all';filters={query:'',area:'all',kind:'all',category:'all'};go('dashboard');toast(`이관 완료: ${label}`)};
+  const importJSON=async file=>{
+    if(!file)return;
+    let o;
+    try{o=JSON.parse(await file.text())}catch(e){toast('JSON을 읽지 못했습니다.');return}
+    if(o.schema!=='store-ledger-v1'||!Array.isArray(o.transactions)||!Array.isArray(o.dailyLotto)){toast('가게부 백업 형식이 아닙니다.');return}
+    if(o.transactions.some(x=>!x.id||!/^\d{4}-\d{2}-\d{2}$/.test(x.date)||!Number.isFinite(Number(x.amount))||Number(x.amount)<0)
+      ||o.dailyLotto.some(x=>!x.id||!/^\d{4}-\d{2}-\d{2}$/.test(x.date)||!Number.isFinite(Number(x.commission)))){
+      toast('일부 거래 또는 토토 자료의 날짜/금액이 올바르지 않습니다.');return
+    }
+    if(new Set(o.transactions.map(x=>String(x.id))).size!==o.transactions.length
+      ||new Set(o.dailyLotto.map(x=>String(x.id))).size!==o.dailyLotto.length){
+      toast('이관 파일에 중복된 거래 ID가 있습니다.');return
+    }
+    const mode=document.querySelector('#import-mode')?.value||'merge';
+    const isSheetSnapshot=o.transactions.some(x=>['수입','고정지출','소비지출'].includes(x.sourceSheet));
+    const merge=mode==='merge'&&isSheetSnapshot&&db.transactions.length>0;
+    const ids=new Set(o.transactions.map(x=>String(x.id)));
+    const days=new Set(o.dailyLotto.map(x=>String(x.date)));
+    const postedLottoMonths=new Set(o.transactions.filter(x=>x.kind==='income'&&x.category==='토토 수수료').map(monthOf));
+    const localRecords=merge?db.transactions.filter(x=>
+      !ids.has(String(x.id)) &&
+      (x.sourceSheet==='직접 입력'||x.sourceSheet==='사이트 월 마감'||String(x.id).startsWith('new-')||String(x.id).startsWith('confirmed-lotto-')) &&
+      !(x.category==='토토 수수료'&&x.kind==='income'&&postedLottoMonths.has(monthOf(x)))
+    ):[];
+    const localLotto=merge?db.dailyLotto.filter(x=>!days.has(String(x.date))&&x.sourceSheet==='직접 입력'):[];
+    const label='시트/백업 거래 '+o.transactions.length+'건, 토토 일별 '+o.dailyLotto.length+'건';
+    const msg=merge
+      ?label+'을 적용하고 직접 입력 '+localRecords.length+'건과 별도 토토 기록 '+localLotto.length+'건을 유지합니다.\n원본 시트에서 가져온 거래는 최신 파일로 갱신됩니다.\n안전을 위해 JSON 백업을 권장합니다. 계속할까요?'
+      :db.transactions.length?label+'을 가져오면 브라우저 장부를 전체 교체합니다.\n기존 자료를 백업하셨나요? 계속할까요?'
+      :label+'을 이 브라우저에 이관하시겠습니까?';
+    if(!confirm(msg))return;
+    const previous=db;
+    db={...empty(),...o,transactions:[...o.transactions,...localRecords],dailyLotto:[...o.dailyLotto,...localLotto]};
+    upgrade(db);
+    if(!save()){db=previous;return}
+    period='all';filters={query:'',area:'all',kind:'all',category:'all'};
+    go('dashboard');
+    toast(merge?'시트 갱신 완료 · 직접 입력 '+localRecords.length+'건 보존':'이관 완료: '+label);
+  };
   const classified=(id,area)=>{const x=db.transactions.find(z=>z.id===id);if(!x)return;x.area=area;save();render();toast(`${labelArea(area)}으로 분류했습니다.`)};
   const selectCategory=()=>{
     const e=document.querySelector('#tx-cat'),a=document.querySelector('#tx-area'),k=document.querySelector('input[name="kind"]:checked');
