@@ -80,7 +80,7 @@
 .sheet-date-label{display:flex;gap:9px;align-items:center;white-space:nowrap;font-size:11px;color:#6c847e;font-weight:720}
 .sheet-date-label input{padding:8px 10px;min-height:38px;border:1px solid #d7e6df;border-radius:8px;color:#29483f}
 .sheet-entry-scroll{overflow:auto;max-height:65vh;border-top:1px solid var(--edge);border-bottom:1px solid var(--edge)}
-.sheet-entry-table{border-collapse:separate;border-spacing:0;min-width:1480px;width:100%;table-layout:fixed}
+.sheet-entry-table{border-collapse:separate;border-spacing:0;min-width:1560px;width:100%;table-layout:fixed}
 .sheet-entry-table thead{position:sticky;top:0;z-index:4;background:#f5f9f6}
 .sheet-entry-table th{background:#f5f9f6;color:#718a82;text-align:left;font-size:11px;font-weight:750;padding:10px 8px;border-bottom:1px solid #dfe8e2}
 .sheet-entry-table th:first-child{width:42px;padding:10px 8px;text-align:center}
@@ -93,7 +93,10 @@
 .sheet-entry-table thead th:nth-child(8){width:185px}
 .sheet-entry-table thead th:nth-child(9){width:134px}
 .sheet-entry-table thead th:nth-child(10){width:186px}
-.sheet-entry-table thead th:nth-child(11){width:57px}
+.sheet-entry-table thead th:nth-child(11){width:75px}
+.sheet-entry-table thead th:nth-child(12){width:57px}
+.sheet-onnuri-choice{display:flex;align-items:center;justify-content:center;min-height:34px;cursor:pointer}
+.sheet-entry-table td .sheet-onnuri-choice input[type="checkbox"]{display:block;width:17px;height:17px;min-width:17px;margin:0;padding:0;border:1px solid #a9c8b7;accent-color:#148b6d;cursor:pointer}
 .sheet-entry-table tbody th{font-size:11px;background:#fafcfb;color:#90a49d;text-align:center;border-bottom:1px solid #e7efea;position:sticky;left:0;z-index:1}
 .sheet-entry-table td{padding:4px 5px;border-right:1px solid #eff3f1;border-bottom:1px solid #e7efea}
 .sheet-entry-table tr:hover td{background:#f9fcfa}
