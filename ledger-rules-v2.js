@@ -73,7 +73,8 @@ function classify(row,customRules={}){
    return item;
  }
  if(matches(m,DAISO))return classification('windmoon',m,row.major,row.minor,'다이소 전 거래 풍월관');
- if(matches(m,ONLINE))return review('온라인 쇼핑: 개인 / 편의점 / 풍월관 선택',m,row.major,row.minor,true);
+ if(/^(?:KTNG|KT&G)/i.test(m))return {action:'keep',scope:'business',status:'confirmed',ledgerType:'fixed',category:'담배 발주',subcategory:'KT&G',reason:'담배 매입 거래처 확인',confidence:0.95};
+ if(matches(m,ONLINE)||row.major==='온라인쇼핑'&&row.minor==='인터넷쇼핑')return review('온라인 쇼핑: 개인 / 편의점 / 풍월관 선택',m,row.major,row.minor,true);
  if(matches(m,DELIVERY))return review('배달 주문은 지역 기준 풍월관 자동분류에서 제외',m,row.major,row.minor);
  if(matches(m,CONVENIENCE)){
    if(n(m).includes('cu둔촌점'))return classification('personal',m,row.major,row.minor,'CU 둔촌점은 풍월관 자동분류 예외');
