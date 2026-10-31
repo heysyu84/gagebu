@@ -18,7 +18,28 @@ GitHub Pages에는 **화면 코드만** 보관합니다. 서버는 별도 Cloudf
 
 **현재 공개 사이트는 Cloudflare 서버 배포 전에도 브라우저 localStorage 모드로 동작합니다.** 서버 미배포 상태에서는 여러 기기가 자동으로 동기화되지 않습니다.
 
-### Cloudflare 최초 설정 (계정 소유자의 1회 설정 필요)
+## Work 없이 서버 설치: GitHub Actions (권장)
+
+PC에 Node.js 설치나 PowerShell 명령 입력 없이 진행하는 방법입니다. **아직 서버가 배포된 상태는 아닙니다.**
+이 저장소의 `.github/workflows/deploy-cloudflare.yml`은 소유자가 직접 실행할 때만 Cloudflare D1/Worker를 만들거나 갱신합니다.
+
+1. [Cloudflare 대시보드](https://dash.cloudflare.com/)에서 편의점 가게부를 배포할 계정을 선택하여 **Account ID**를 확인합니다.
+2. Cloudflare의 **API Tokens → Create Token**에서 이 계정만 대상으로 한 토큰을 생성합니다. D1 데이터베이스 생성·SQL 실행 권한(계정 D1 Edit)과 새 Worker 생성·배포 권한(Workers Admin/필요한 Workers Scripts 권한)이 필요합니다. 권한을 다른 계정까지 확대하지 마세요.
+3. [store-ledger GitHub Actions secrets](https://github.com/heysyu84/store-ledger/settings/secrets/actions)에 아래 네 가지를 추가합니다.
+   - `CLOUDFLARE_ACCOUNT_ID`: 1번 계정 ID
+   - `CLOUDFLARE_API_TOKEN`: 2번에서 만든 토큰
+   - `STORE_LEDGER_ADMIN_PASSWORD`: 본인만 아는 16자 이상 새 관리자 비밀번호
+   - `STORE_LEDGER_SESSION_PEPPER`: 관리자 비밀번호와 **다른** 32자 이상의 무작위 비밀 문자열
+4. [Deploy private ledger API](https://github.com/heysyu84/store-ledger/actions/workflows/deploy-cloudflare.yml) → **Run workflow** → `main` → Run workflow를 누릅니다.
+5. 작업이 **초록색 Success**로 끝나면 실행 로그의 `https://...workers.dev` 주소를 복사합니다. [가게부 사이트](https://heysyu84.github.io/store-ledger/) → 데이터 관리 → 서버 저장에 이 주소와 관리자 비밀번호를 넣고 로그인합니다.
+6. 기존 브라우저의 장부를 **JSON으로 먼저 백업**하고, 서버가 비어 있는 것을 확인한 후 처음 한 번만 서버로 올립니다. 실제 금융 데이터를 GitHub 저장소나 GitHub Secrets에 붙여넣지 마세요.
+
+**보안:** API 토큰, 관리자 비밀번호, SESSION_PEPPER는 이 채팅·공개 저장소·스크린샷에 노출하지 마세요.
+배포 워크플로는 민감한 값을 GitHub Actions Secrets에서 읽고 임시 파일로 Worker에 전달하며, 장부 내용을 GitHub에 넣지 않습니다.
+D1 초기화 SQL은 테이블이 없을 때만 생성하며 기존 데이터를 삭제하지 않습니다.
+실행 실패 시 Secrets 권한 및 Actions 오류를 확인합니다. 워크플로 등록만으로 서버가 생기지는 않습니다.
+
+### 수동 배포: 명령줄 방식 (대안)
 
 Cloudflare 계정이 로그인된 명령줄에서 저장소를 복제한 뒤 다음 명령을 실행합니다.
 
