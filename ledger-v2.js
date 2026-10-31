@@ -1053,7 +1053,8 @@ function importPreview(){
  return '<section class="surface"><div class="surface-head"><div><h2>가져오기 미리보기</h2><p>'+E(p.fileName)+' · '+E(p.range.from)+' ~ '+E(p.range.to)+' · 기간 밖 '+p.outOfRange+'건 제외</p></div><span class="tag tag-ok">브라우저 내 분석 완료</span></div>'+
  '<div class="import-stats"><div><strong>'+p.total.toLocaleString('ko-KR')+'</strong><span>분석한 행</span></div><div><strong>'+p.newItems.length.toLocaleString('ko-KR')+'</strong><span>신규 등록 후보</span></div><div><strong>'+p.links.length.toLocaleString('ko-KR')+'</strong><span>기존 시트 연결 후보</span></div><div><strong>'+p.reviewCount.toLocaleString('ko-KR')+'</strong><span>신규 미분류</span></div></div>'+
  '<div class="import-review"><div><h3>자동 제외 내역 (건수만 집계, 거래 원문 미저장)</h3>'+summary+'</div><div><h3>신규 거래 미리보기</h3>'+p.newItems.slice(0,8).map(x=>'<div class="sample-line"><span>'+E(x.merchant)+' <small>'+E(x.date)+'</small></span><b>'+won(x.amount)+'</b></div>').join('')+'</div></div>'+
- '<div class="import-actions"><button class="btn subtle" id="discard-import">미리보기 취소</button><button class="btn primary" id="commit-bank">확인한 거래 가져오기 ('+p.newItems.length+'건)</button></div></section>';
+ '<div class="import-actions"><span class="bank-refund-info">환불 '+(p.refunds||[]).length+'건 · 자동 연결 '+(p.refunds||[]).filter(x=>x.status==='matched').length+'건 · 확인 필요 '+(p.refunds||[]).filter(x=>x.status==='review').length+'건</span>'+
+ '<button class="btn subtle" id="discard-import">미리보기 취소</button><button class="btn primary" id="commit-bank">거래 '+p.newItems.length+'건 / 환불 '+(p.refunds||[]).length+'건 등록</button></div></section>';
 }
 function rulesPage(){
  const fixed=[
@@ -1362,6 +1363,52 @@ function classifyPairedLGUPlus(row){
    reason:'과거 확정 원장의 월별 LG U+ 이중 청구 패턴 ('+paired.length+'개월) 및 요금대 일치',
    confidence:0.95};
 }
+/* Credit amounts in BankSalad's '지출' rows are refunds. Only a uniquely
+   identified earlier charge may be netted off, preserving FX differences. */
+function findRefundTarget(refund,candidates,allocated=new Map()){
+ const pay=paymentLabelKey(refund.payment),merchant=G.normalizeMerchant(refund.merchant||'');
+ if(!pay||!merchant)return null;
+ const plausible=candidates.filter(x=>{
+   if(x.direction!=='expense'||x.status==='excluded'||!x.id)return false;
+   if(paymentLabelKey(x.bankPayment||x.payment)!==pay)return false;
+   if(G.normalizeMerchant(x.merchant||'')!==merchant)return false;
+   const days=(Date.parse(refund.date+'T00:00:00Z')-Date.parse(x.date+'T00:00:00Z'))/86400000;
+   if(!Number.isFinite(days)||days<0||days>120)return false;
+   const paid=n(x.amount),credit=n(refund.amount);
+   if(paid<=0||credit<=0||credit>paid*1.05+500-(allocated.get(x.id)||0))return false;
+   return Math.abs(paid-credit)<=Math.max(400,paid*0.035);
+ }).map(x=>{
+   const paid=n(x.amount),credit=n(refund.amount);
+   const days=(Date.parse(refund.date+'T00:00:00Z')-Date.parse(x.date+'T00:00:00Z'))/86400000;
+   return {record:x,diff:Math.abs(paid-credit),days,score:Math.abs(paid-credit)/paid+days/5000};
+ }).sort((a,b)=>a.score-b.score);
+ if(!plausible.length)return null;
+ const best=plausible[0],second=plausible[1];
+ if(second&&Math.abs(second.diff-best.diff)<Math.max(500,n(best.record.amount)*0.007)&&Math.abs(second.days-best.days)<=2)return null;
+ return best.record.id;
+}
+function reconcileBankRefunds(positives,newItems,links){
+ const candidates=[...state.records.filter(x=>x.direction==='expense'),...newItems];
+ const byId=new Map(state.records.map(x=>[x.id,x]));
+ for(const l of links){const source=byId.get(l.id);
+   if(source)candidates.push({...source,merchant:l.merchant||source.merchant,payment:l.payment,bankPayment:l.payment});
+ }
+ const allocated=new Map();
+ for(const x of state.refunds||[])if(x.status==='matched'&&x.refundOf)
+   allocated.set(x.refundOf,(allocated.get(x.refundOf)||0)+n(x.amount));
+ const refs=[],already=new Set((state.refunds||[]).map(x=>x.bankKey));
+ for(const {row,key} of positives){
+   if(already.has(key))continue;
+   const raw={id:'refund-'+key,bankKey:key,date:row.date,time:row.time,amount:Math.round(Number(row.amount)),
+     payment:String(row.payment||''),merchant:String(row.merchant||''),source:'bank',bankType:row.type,
+     sourceSheet:'뱅크샐러드',note:String(row.memo||''),refundOf:'',status:'review'};
+   const linked=findRefundTarget(raw,candidates,allocated);
+   if(linked){raw.refundOf=linked;raw.status='matched';
+     allocated.set(linked,(allocated.get(linked)||0)+raw.amount)}
+   refs.push(raw);already.add(key);
+ }
+ return refs;
+}
 async function processBank(file,range=bankImportRange){
  const bounds=validateBankRange(range);
  const parsed=await window.BankSaladXLSX.parseBankSalad(file);
@@ -1374,7 +1421,7 @@ async function processBank(file,range=bankImportRange){
    ...(Array.isArray(state.excludedAudit)?state.excludedAudit.map(x=>x.bankKey):[])
  ].filter(Boolean));
  const source=state.records.filter(x=>x.source!=='bank'&&x.direction==='expense');
- const used=new Set(),counts={},all=[],links=[];
+ const used=new Set(),counts={},all=[],links=[],refundRows=[];
  const duplicates=new Map();let reviewCount=0,outOfRange=0;
  const count=r=>{counts[r]=(counts[r]||0)+1};
  for(const row of parsed.rows){
@@ -1382,6 +1429,11 @@ async function processBank(file,range=bankImportRange){
    const key=bankKey(fingerprint(row,i));
    if(row.date<bounds.from||row.date>bounds.to){outOfRange++;continue}
    if(existing.has(key)){count('이미 가져온 거래');continue}
+   if(row.type==='지출'&&Number(row.amount)>0){
+     if(!(state.refunds||[]).some(x=>x.bankKey===key))refundRows.push({row,key});
+     else count('이미 가져온 환불');
+     continue;
+   }
    let cls=G.classify(row,state.customRules);
    if(cls.action==='keep'&&cls.status==='review'&&/LG U\+ 가게 인터넷·개인 휴대폰/.test(cls.reason||'')){
      const paired=classifyPairedLGUPlus(row);
@@ -1430,7 +1482,8 @@ async function processBank(file,range=bankImportRange){
    if(item.status==='review')reviewCount++;
    all.push(item);
  }
- return {fileName:parsed.fileName,total:parsed.rows.length,range:bounds,outOfRange,newItems:all,links,skips:counts,reviewCount};
+ const refunds=reconcileBankRefunds(refundRows,all,links);
+ return {fileName:parsed.fileName,total:parsed.rows.length,range:bounds,outOfRange,newItems:all,links,refunds,skips:counts,reviewCount};
 }
 async function onBankFile(file){
  if(!file)return;
@@ -1445,7 +1498,7 @@ async function onBankFile(file){
 }
 function commitBank(){
  if(!preview)return;
- if(!confirm(preview.newItems.length+'건을 등록하고 기존 시트의 거래처 '+preview.links.length+'건을 연결할까요? 미분류는 확정 지출로 계산하지 않습니다.'))return;
+ if(!confirm('신규 거래 '+preview.newItems.length+'건, 기존 시트 연결 '+preview.links.length+'건, 환불 '+(preview.refunds||[]).length+'건을 등록할까요?\n환불 중 '+(preview.refunds||[]).filter(x=>x.status==='matched').length+'건은 원결제와 연결해 순지출에서 차감합니다. 확실하지 않은 환불은 검토로 남깁니다.'))return;
  const map=new Map(state.records.map(x=>[x.id,x]));
  state.rentRecipients=state.rentRecipients||{};
  for(const link of preview.links){
@@ -1460,9 +1513,10 @@ function commitBank(){
    }
  }
  state.records.push(...preview.newItems);
- state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,range:preview.range,outOfRange:preview.outOfRange,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount});
- const count=preview.newItems.length;preview=null;
- if(save()){render();navigate('review');toast('거래 '+count+'건을 가져왔습니다. 미분류부터 확인하세요.')}
+ state.refunds=[...(state.refunds||[]),...(preview.refunds||[])];
+ state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,range:preview.range,outOfRange:preview.outOfRange,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount,refundAdded:(preview.refunds||[]).length,refundMatched:(preview.refunds||[]).filter(x=>x.status==='matched').length});
+ const count=preview.newItems.length,refundCount=(preview.refunds||[]).length;preview=null;
+ if(save()){render();navigate('review');toast('거래 '+count+'건 · 환불 '+refundCount+'건 가져왔습니다. 미분류와 환불 검토를 확인하세요.')}
 }
 /* Backup imports are strictly non-destructive. Even a year-old V2 snapshot may
    only add missing records/dates; it cannot replace or silently edit newer data. */
