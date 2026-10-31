@@ -12,7 +12,7 @@ const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
 const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
-let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym();
+let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -372,7 +372,10 @@ function recordsPage(){
 }
 function importPage(){
  return pageIntro('DATA IMPORT','금융내역 가져오기','모든 분석은 브라우저 내부에서만 실행됩니다. 민감한 금융 엑셀은 공개 GitHub나 외부 서버에 업로드하지 않습니다.')+
- '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>02</span><div><h2>뱅크샐러드 엑셀</h2><p>2026년 1월 이후 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
+ '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>02</span><div><h2>뱅크샐러드 엑셀</h2><p>선택 기간 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
+ '<div class="bank-range"><strong>가져올 거래 기간</strong><small>시작일과 종료일 포함 · 선택 기간의 거래만 등록</small>'+
+ '<label>시작일 <input id="bank-import-from" type="date" value="'+E(bankImportRange.from)+'"></label>'+
+ '<label>종료일 <input id="bank-import-to" type="date" value="'+E(bankImportRange.to)+'"></label></div>'+
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
  '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>기존 가게부 가져오기</h2><p>구글 시트 이관 JSON을 기준 장부로 합칩니다. 예전에 브라우저에 저장한 자료는 자동 복사하며 원본은 유지합니다.</p></div></div>'+
@@ -385,7 +388,7 @@ function importEmpty(){return '<section class="surface import-placeholder"><div 
 function importPreview(){
  const p=preview;
  const summary=Object.entries(p.skips).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>'<div class="summary-line"><span>'+E(k)+'</span><strong>'+v.toLocaleString('ko-KR')+'건</strong></div>').join('');
- return '<section class="surface"><div class="surface-head"><div><h2>가져오기 미리보기</h2><p>'+E(p.fileName)+' · 수집 범위: 2026년 1월 이후</p></div><span class="tag tag-ok">브라우저 내 분석 완료</span></div>'+
+ return '<section class="surface"><div class="surface-head"><div><h2>가져오기 미리보기</h2><p>'+E(p.fileName)+' · '+E(p.range.from)+' ~ '+E(p.range.to)+' · 기간 밖 '+p.outOfRange+'건 제외</p></div><span class="tag tag-ok">브라우저 내 분석 완료</span></div>'+
  '<div class="import-stats"><div><strong>'+p.total.toLocaleString('ko-KR')+'</strong><span>분석한 행</span></div><div><strong>'+p.newItems.length.toLocaleString('ko-KR')+'</strong><span>신규 등록 후보</span></div><div><strong>'+p.links.length.toLocaleString('ko-KR')+'</strong><span>기존 시트 연결 후보</span></div><div><strong>'+p.reviewCount.toLocaleString('ko-KR')+'</strong><span>신규 미분류</span></div></div>'+
  '<div class="import-review"><div><h3>자동 제외 내역 (건수만 집계, 거래 원문 미저장)</h3>'+summary+'</div><div><h3>신규 거래 미리보기</h3>'+p.newItems.slice(0,8).map(x=>'<div class="sample-line"><span>'+E(x.merchant)+' <small>'+E(x.date)+'</small></span><b>'+won(x.amount)+'</b></div>').join('')+'</div></div>'+
  '<div class="import-actions"><button class="btn subtle" id="discard-import">미리보기 취소</button><button class="btn primary" id="commit-bank">확인한 거래 가져오기 ('+p.newItems.length+'건)</button></div></section>';
@@ -650,16 +653,23 @@ function matchOld(row,candidates,used){
  }
  return {record:null};
 }
-async function processBank(file){
+const validateBankRange=range=>{
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(range.from)||!/^\d{4}-\d{2}-\d{2}$/.test(range.to)||range.from>range.to||Number.isNaN(Date.parse(range.from+'T00:00:00Z'))||Number.isNaN(Date.parse(range.to+'T00:00:00Z')))
+ throw Error('시작일은 종료일보다 늦을 수 없습니다.');
+ return {...range};
+};
+async function processBank(file,range=bankImportRange){
+ const bounds=validateBankRange(range);
  const parsed=await window.BankSaladXLSX.parseBankSalad(file);
  const existing=new Set(state.records.map(x=>x.bankKey).filter(Boolean));
  const source=state.records.filter(x=>x.source!=='bank'&&x.direction==='expense');
  const used=new Set(),counts={},all=[],links=[];
- const duplicates=new Map();let reviewCount=0;
+ const duplicates=new Map();let reviewCount=0,outOfRange=0;
  const count=r=>{counts[r]=(counts[r]||0)+1};
  for(const row of parsed.rows){
    const root=fingerprint(row,0),i=duplicates.get(root)||0;duplicates.set(root,i+1);
    const key=bankKey(fingerprint(row,i));
+   if(row.date<bounds.from||row.date>bounds.to){outOfRange++;continue}
    if(existing.has(key)){count('이미 가져온 거래');continue}
    let cls=G.classify(row,state.customRules);
    const savedRent=state.rentRecipients?.[G.normalizeMerchant(row.merchant)];
@@ -702,14 +712,16 @@ async function processBank(file){
    if(item.status==='review')reviewCount++;
    all.push(item);
  }
- return {fileName:parsed.fileName,total:parsed.rows.length,newItems:all,links,skips:counts,reviewCount};
+ return {fileName:parsed.fileName,total:parsed.rows.length,range:bounds,outOfRange,newItems:all,links,skips:counts,reviewCount};
 }
 async function onBankFile(file){
  if(!file)return;
- try{
+ try{validateBankRange(bankImportRange);lastBankFile=file;
+  const token=++bankLoadToken;
   $('#save-indicator').textContent='금융내역 분석 중…';
-  preview=await processBank(file);
-  render();
+  const result=await processBank(file,{...bankImportRange});
+  if(token!==bankLoadToken)return;
+  preview=result;render();
   toast('분석 완료: '+preview.newItems.length+'건 신규 후보, '+preview.reviewCount+'건 검토 필요');
  }catch(e){console.error(e);toast('엑셀 분석 오류: '+e.message);setStatus('가져오기 실패')}
 }
@@ -729,7 +741,7 @@ function commitBank(){
    }
  }
  state.records.push(...preview.newItems);
- state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount});
+ state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,range:preview.range,outOfRange:preview.outOfRange,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount});
  const count=preview.newItems.length;preview=null;
  if(save()){render();navigate('review');toast('거래 '+count+'건을 가져왔습니다. 미분류부터 확인하세요.')}
 }
@@ -896,6 +908,11 @@ function onChange(e){
  if(el.id==='lotto-rate'){
    const rate=Number(el.value);if(!Number.isFinite(rate)||rate<0||rate>100){toast('수수료율은 0~100% 사이로 입력하세요.');return}
    state.lottoRatePct=rate;save();return
+ }
+ if(el.id==='bank-import-from'||el.id==='bank-import-to'){
+   bankImportRange[el.id==='bank-import-from'?'from':'to']=el.value;preview=null;bankLoadToken++;
+   try{validateBankRange(bankImportRange)}catch(e){toast(e.message);return}
+   if(lastBankFile)void onBankFile(lastBankFile);else render();return;
  }
  if(el.id==='bank-file'){onBankFile(el.files?.[0]);el.value='';return}
  if(el.id==='legacy-file'){importLegacy(el.files?.[0]);el.value='';return}

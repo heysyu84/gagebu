@@ -66,7 +66,7 @@ async function parseBankSalad(file){
    }
    if(!head.length){head.push(...cols);continue}
    const date=excelDate(cols[0]);
-   if(!date||date<'2026-01-01')continue;
+   if(!date)continue;
    const merchant=String(cols[5]??'').trim();
    const amount=Number(String(cols[6]??0).replace(/,/g,''));
    if(!Number.isFinite(amount))continue;

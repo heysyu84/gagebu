@@ -105,3 +105,5 @@
 .sheet-toolbar-left{display:flex;flex-wrap:wrap;gap:7px;margin-right:auto}
 #sheet-row-counter{font-size:12px;color:#789087}
 @media(max-width:730px){.sheet-entry .surface-head{display:block}.sheet-date-label{margin-top:12px}.sheet-toolbar{padding:13px}.sheet-toolbar-left{width:100%}.sheet-toolbar-left .btn{flex:1}.sheet-toolbar #sheet-submit{width:100%}}
+
+.bank-range{background:#f5faf7;border:1px solid #dcebe4;border-radius:12px;padding:15px;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 15px}.bank-range>strong,.bank-range>small{grid-column:1/-1}.bank-range>small{color:#7f9a90}.bank-range label{font-size:11px;font-weight:750;color:#527f72;display:flex;flex-direction:column;gap:6px}.bank-range input{background:white;border:1px solid #d1e3da;border-radius:7px;padding:9px;color:#274b40;min-width:0;width:100%}
