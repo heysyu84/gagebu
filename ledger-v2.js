@@ -46,7 +46,7 @@ function syncEditorOnnuriDefault(){
  el.title=suggestion.auto?'동일 가게의 과거 온누리 결제 이력으로 자동 체크됨':'';
 }
 const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
-let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
+let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -173,7 +173,7 @@ function load(){
  }
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
-const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
+const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(paymentFilter==='all'||effectivePaymentMethod(x)===paymentFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.bankPayment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
 const monthlyOptions=()=>{
  const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
  for(let m=1;m<=12;m++)months.add('2026-'+String(m).padStart(2,'0'));
@@ -194,7 +194,13 @@ function pageIntro(eyebrow,title,desc,right=''){
  return '<section class="page-head"><div><div class="eyebrow">'+E(eyebrow)+'</div><h1>'+E(title)+'</h1><p>'+desc+'</p></div>'+right+'</section>';
 }
 function topFilters(){
- return '<div class="filter-row"><select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select><select id="scope-filter" aria-label="사용처"><option value="all">모든 사용처</option>'+Object.entries(LABEL).filter(([k])=>k!=='transfer'&&k!=='excluded').map(([k,v])=>'<option value="'+k+'"'+(scopeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select><select id="type-filter" aria-label="장부 유형"><option value="all">모든 지출 종류</option>'+Object.entries(GROUP).map(([k,v])=>'<option value="'+k+'"'+(typeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select><input id="query-filter" class="search" type="search" autocomplete="off" placeholder="거래처 · 메모 · 결제수단 검색" value="'+E(q)+'"></div>';
+ const methods=paymentFilterChoices();
+ const options=methods.map(([label,count])=>'<option value="'+E(label)+'"'+(paymentFilter===label?' selected':'')+'>'+E(label)+' ('+count+'건)</option>').join('');
+ return '<div class="filter-row"><select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>'+
+ '<select id="scope-filter" aria-label="사용처"><option value="all">모든 사용처</option>'+Object.entries(LABEL).filter(([k])=>k!=='transfer'&&k!=='excluded').map(([k,v])=>'<option value="'+k+'"'+(scopeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select>'+
+ '<select id="type-filter" aria-label="장부 유형"><option value="all">모든 지출 종류</option>'+Object.entries(GROUP).map(([k,v])=>'<option value="'+k+'"'+(typeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select>'+
+ '<select id="payment-filter" class="payment-filter" aria-label="결제수단별 조회"><option value="all">모든 결제수단</option>'+options+'</select>'+
+ '<input id="query-filter" class="search" type="search" autocomplete="off" placeholder="거래처 · 메모 · 결제수단 검색" value="'+E(q)+'"></div>';
 }
 /* Situation board visualizations are derived at render time; never persist
    aggregates or alter underlying ledger rows. Period controls every figure. */
@@ -589,6 +595,24 @@ const paymentLabelKey=value=>{
 };
 const isPaymentMonthMarker=value=>/^(?:[1-9]|1[0-2])$/.test(String(value||'').trim());
 const isCardPayment=value=>BANKSALAD_CARDS.includes(value)||/(?:카드|체크카드|HI-POINT|CLASSIC-Y)/i.test(value);
+// One consistent funding label for transactions, dashboard aggregates, and filters.
+// "현금/송금" is intentionally not split: the original sheet does not distinguish them.
+function effectivePaymentMethod(x){
+ if(isOnnuri(x))return '온누리상품권';
+ let pay=String(x.payment||'').trim();
+ if((!pay||/^(?:카드|체크카드|신용카드)$/i.test(pay))&&x.bankPayment)pay=String(x.bankPayment).trim();
+ const result=paymentLabelKey(pay);
+ return result&&!isPaymentMonthMarker(result)?result:'결제수단 미기재';
+}
+function paymentFilterChoices(){
+ const counts=new Map();
+ for(const x of state.records||[]){
+   if(x.direction!=='expense'||x.status==='excluded')continue;
+   const method=effectivePaymentMethod(x);
+   counts.set(method,(counts.get(method)||0)+1);
+ }
+ return [...counts.entries()].sort(([a,c],[b,d])=>Number(!isCardPayment(a))-Number(!isCardPayment(b))||d-c||a.localeCompare(b,'ko'));
+}
 function paymentUsageCounts(){
  const counts=new Map();
  for(const r of state.records||[]){
@@ -972,12 +996,31 @@ function sheetSelectChange(el){
 }
 
 function recordsPage(){
- const entries=filtered(state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded')).sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time));
- return pageIntro('TRANSACTIONS','전체 거래내역','은행에서 가져온 거래와 원본 시트의 현금 지출을 함께 관리합니다. 원본 출처와 거래처 정보를 보존합니다.',
+ const entries=filtered(state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded')).sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||'')));
+ const confirmed=entries.filter(x=>x.status==='confirmed'&&x.scope!=='review'),pending=entries.filter(x=>x.status==='review'||x.scope==='review');
+ const group=new Map(),merchant=new Map();
+ if(paymentFilter!=='all')for(const x of entries){
+   const name=[x.category||'미분류',x.subcategory||''].filter(Boolean).join(' / ');
+   const obj=group.get(name)||{amount:0,count:0};obj.amount+=n(x.amount);obj.count++;group.set(name,obj);
+   const shop=String(x.merchant||'거래처 미기재').trim()||'거래처 미기재';
+   const prior=merchant.get(shop)||{amount:0,count:0};prior.amount+=n(x.amount);prior.count++;merchant.set(shop,prior);
+ }
+ const paymentBreakdown=paymentFilter==='all'?'':(()=>{
+   const fmt=map=>[...map.entries()].sort((a,b)=>b[1].amount-a[1].amount).slice(0,5).map(([name,x])=>
+     '<div class="payment-filter-breakdown-row"><span title="'+E(name)+'">'+E(name)+'</span><strong>'+won(x.amount)+'</strong><small>'+x.count+'건</small></div>').join('')||'<div class="empty">조회되는 거래가 없습니다.</div>';
+   return '<div class="payment-filter-breakdown"><div class="payment-filter-breakdown-head"><b>'+E(paymentFilter)+' 사용 내역</b>'+
+     '<span>전체 지출 '+won(sum(entries))+' · '+entries.length+'건</span>'+
+     '<button type="button" class="btn subtle" id="clear-payment-filter">필터 해제</button></div>'+
+     (paymentFilter==='현금/송금'?'<p class="payment-filter-notice">원본 시트에서 현금과 계좌송금을 합쳐 기록한 결제방식입니다. 담배·주류 발주, 월세·임대료 등이 포함되므로 전액 현금 소비를 의미하지 않습니다.</p>':'')+
+     '<div class="payment-filter-breakdown-cols"><div><h3>어디에 많이 썼나 · 지출항목</h3>'+fmt(group)+'</div>'+
+     '<div><h3>어디에 많이 썼나 · 거래처</h3>'+fmt(merchant)+'</div></div></div>';
+ })();
+ return pageIntro('TRANSACTIONS','전체 거래내역','은행에서 가져온 거래와 원본 시트의 현금 지출을 함께 관리합니다. 결제수단으로 카드·현금/송금·온누리 등을 구분해 볼 수 있습니다.',
  '<button class="btn primary" id="new-record">＋ 직접 입력</button>')+
  '<section class="surface records-surface">'+topFilters()+
- '<div class="table-topline"><span>조회 결과 <b>'+entries.length.toLocaleString('ko-KR')+'건</b></span><strong>합계 '+won(sum(entries.filter(x=>x.scope!=='review'&&x.scope!=='windmoon')))+'</strong></div>'+
- transactionTable(entries.slice(offset,offset+80))+
+ '<div class="table-topline"><span>조회 결과 <b>'+entries.length.toLocaleString('ko-KR')+'건</b></span>'+
+ '<strong>확정 지출 '+won(sum(confirmed))+(pending.length?' · 미분류 '+won(sum(pending)):'')+'</strong></div>'+
+ paymentBreakdown+transactionTable(entries.slice(offset,offset+80))+
  '<div class="pager"><button class="btn" data-page-step="-1" '+(offset===0?'disabled':'')+'>이전</button><span>'+(entries.length?offset+1:0)+'–'+Math.min(offset+80,entries.length)+' / '+entries.length+'</span><button class="btn" data-page-step="1" '+(offset+80>=entries.length?'disabled':'')+'>다음</button></div></section>';
 }
 function importPage(){
@@ -1227,7 +1270,7 @@ function navigate(p){
  if(!VIEWS[p])return;
  if(p==='lotto'&&page==='sales')lottoMonth=salesMonth;
  if(p==='sales'&&page==='lotto')salesMonth=lottoMonth;
- page=p;offset=0;reviewOffset=0;scopeFilter='all';typeFilter='all';q='';
+ page=p;offset=0;reviewOffset=0;scopeFilter='all';typeFilter='all';paymentFilter='all';q='';
  location.hash='#'+p;render();window.scrollTo(0,0);
 }
 function patchRecord(id,updates){
@@ -1670,6 +1713,7 @@ function onClick(event){
    render();return;
  }
  if(target.dataset.dashboardExpandPayments){dashboardPayAll=!dashboardPayAll;render();return}
+ if(target.id==='clear-payment-filter'){paymentFilter='all';offset=0;render();return}
  if(target.id==='restore-bank-presets'){restoreBankSaladPresets();return}
  if(target.id==='sheet-add-5'||target.id==='sheet-add-20'){
    readSheetCells();const count=target.id==='sheet-add-5'?5:20;
@@ -1771,6 +1815,7 @@ function onChange(e){
  if(el.id==='period-filter'){period=el.value;offset=0;reviewOffset=0;render();return}
  if(el.id==='scope-filter'){scopeFilter=el.value;offset=0;render();return}
  if(el.id==='type-filter'){typeFilter=el.value;offset=0;render();return}
+ if(el.id==='payment-filter'){paymentFilter=el.value;offset=0;render();return}
  if(el.id==='query-filter'){q=el.value;offset=0;render();$('#query-filter')?.focus();return}
 }
 function init(){
