@@ -49,3 +49,28 @@
 .sales-overview-grid strong{font-size:20px}
 @media(max-width:760px){.sales-forms{grid-template-columns:1fr}.sales-metrics,.sales-overview-grid{gap:8px}.sales-metrics>div,.sales-overview-grid>div{padding:13px}.sales-metrics strong,.sales-overview-grid strong{font-size:16px}.sales-overview-grid{padding:0 14px 18px}}
 @media(max-width:440px){.sales-metrics{grid-template-columns:1fr}.sales-metrics>div{display:flex;align-items:center;justify-content:space-between;gap:10px}.sales-metrics span{margin:0}.sales-metrics strong{font-size:17px}.sales-form{padding:17px}}
+
+/* POS monthly and Lotto daily input enhancements */
+.sales-profit-preview{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#f0f8f4;border:1px solid #d6eee1;border-radius:9px;padding:13px 14px;margin:0 0 18px;font-size:11px;color:#678779}
+.sales-profit-preview strong{font-size:17px;color:#116855;letter-spacing:-.2px;white-space:nowrap;font-weight:820}
+.lotto-metrics{margin-bottom:18px}
+.lotto-rate{display:flex;align-items:center;gap:10px;color:#6c8580;font-size:12px;font-weight:690;white-space:nowrap}
+.lotto-rate input{max-width:100px;min-height:36px;border:1px solid #d9e6df;border-radius:8px;padding:7px 10px;color:#264b42;background:#fff;font-size:13px}
+.lotto-day-table{min-width:580px}
+.lotto-day-table th{font-size:11px}
+.lotto-day-table td{padding:9px 17px}
+.lotto-day-table td:first-child{min-width:128px}
+.lotto-day-table td:first-child b{font-size:12px;color:#35554c}
+.lotto-day-table td small{font-size:10px;margin-top:2px}
+.lotto-day-table td input{width:100%;min-width:130px;max-width:250px;height:35px;padding:8px 10px;border:1px solid #deebe5;border-radius:7px;color:#244339;background:#fff;font-variant-numeric:tabular-nums}
+.lotto-day-table .lotto-pause{background:#f6f8fa}
+.lotto-day-table .lotto-pause td:first-child b{color:#81929b}
+.lotto-pause-tag{display:inline-block;color:#6b7e8a;font-size:10px;font-weight:750;background:#e9eef2;border-radius:4px;padding:2px 6px;margin:6px 0 0;white-space:nowrap}
+.lotto-form-actions{padding:18px 23px;display:flex;align-items:center;justify-content:space-between;gap:18px;background:#fbfdfc;border-top:1px solid #e9f0eb}
+.lotto-form-actions span{font-size:11px;color:#81998c;line-height:1.5}
+.lotto-form-actions button{white-space:nowrap}
+.lotto-confirm{padding:8px 23px 24px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.lotto-confirm>.summary-line{flex-basis:100%;padding:12px 3px}
+.lotto-confirm .incomplete-warning{color:#b48642;font-size:11px;flex-basis:100%;margin:0}
+.finance-overview{margin-top:14px}
+@media(max-width:650px){.sales-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.lotto-form-actions{flex-wrap:wrap;padding:16px}.lotto-form-actions button{width:100%}.lotto-confirm{padding:12px 16px 20px}.lotto-rate{margin-top:10px}.lotto-metrics strong{font-size:16px}}

@@ -7,12 +7,12 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원',ym=()=>new Date().toISOString().slice(0,7);
 const now=()=>new Date().toISOString().slice(0,10),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sales:'월매출 입력',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
-const blank=()=>({version:2,records:[],customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
-let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym();
+const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym();
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -36,24 +36,73 @@ function migrateLegacy(data){
  }));
  return entries.filter(x=>x.date.startsWith('2026-'));
 }
+
+const numInput=raw=>{
+ const s=String(raw??'').replace(/[,\s₩원]/g,'');
+ return /^\d+$/.test(s)?Number(s):NaN;
+};
+const signedInput=raw=>{const s=String(raw??'').replace(/[,\s₩원]/g,'');return /^-?\d+$/.test(s)?Number(s):NaN;};
+const normalizeDailyLotto=x=>{
+ const date=String(x?.date||'');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!date.startsWith('2026-'))return null;
+ const commission=Number(x.commission),handle=Number(x.handle);
+ if(!Number.isSafeInteger(commission)||commission<0||!Number.isSafeInteger(handle)||handle<0)return null;
+ return {id:String(x.id||'lotto-'+date),date,commission,handle,
+   sourceSheet:String(x.sourceSheet||'일별 입력'),sourceRow:x.sourceRow??null,
+   commissionEstimated:!!x.commissionEstimated};
+};
+function mergeDailyLotto(rows){
+ if(!Array.isArray(rows))return {added:0,skipped:0};
+ state.dailyLotto=state.dailyLotto||[];
+ const exists=new Set(state.dailyLotto.map(x=>x.date));
+ let added=0,skipped=0;
+ for(const raw of rows){
+   const x=normalizeDailyLotto(raw);
+   if(!x||exists.has(x.date)){skipped++;continue}
+   state.dailyLotto.push(x);exists.add(x.date);added++;
+ }
+ return {added,skipped};
+}
+function mergeStoreProfits(profits){
+ const data=profits&&typeof profits==='object'&&!Array.isArray(profits)?profits:{};
+ state.storeProfits=state.storeProfits||{};let changed=0;
+ for(const [month,raw] of Object.entries(data)){
+   const amount=Number(raw);
+   if(!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||!Number.isSafeInteger(amount))continue;
+   if(state.storeProfits[month]===undefined||state.storeProfits[month]===null){
+     state.storeProfits[month]=amount;changed++;
+   }
+ }
+ return changed;
+}
 function save(){
  try{localStorage.setItem(KEY,JSON.stringify(state));setStatus('이 브라우저에 저장됨');return true}
  catch(err){toast('브라우저 저장 공간 부족: 백업 후 데이터를 확인해 주세요.');return false}
 }
 function load(){
- try{const existing=JSON.parse(localStorage.getItem(KEY)||'null');
-   if(existing&&existing.version===2&&Array.isArray(existing.records)){state={...blank(),...existing};return}
+ let hadV2=false;
+ try{
+   const existing=JSON.parse(localStorage.getItem(KEY)||'null');
+   if(existing&&existing.version===2&&Array.isArray(existing.records)){
+     state={...blank(),...existing};
+     if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
+     if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
+     hadV2=true;
+   }
  }catch(err){console.warn('V2 load failed',err)}
- try{const legacy=JSON.parse(localStorage.getItem(OLD)||'null');
+ try{
+   const legacy=JSON.parse(localStorage.getItem(OLD)||'null');
    if(legacy&&Array.isArray(legacy.transactions)){
-     state.records=migrateLegacy(legacy);state.migratedFromV1=true;save();
+     if(!hadV2){state.records=migrateLegacy(legacy);state.migratedFromV1=true;}
+     const merged=mergeDailyLotto(legacy.dailyLotto);
+     if(!hadV2||merged.added)save();
    }
  }catch(err){console.warn('Legacy load failed',err)}
 }
 const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
 const monthlyOptions=()=>{
- const months=new Set(state.records.map(x=>x.date.slice(0,7)).filter(x=>/^20\d\d-\d\d$/.test(x)));
+ const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
  for(let m=1;m<=12;m++)months.add('2026-'+String(m).padStart(2,'0'));
  return ['<option value="all">전체 기간</option>',...[...months].sort().reverse().map(m=>'<option value="'+m+'"'+(m===period?' selected':'')+'>'+m.slice(0,4)+'년 '+Number(m.slice(5))+'월</option>')].join('');
 };
@@ -81,7 +130,7 @@ function dashboard(){
  const categories=Object.entries(all.filter(x=>x.scope!=='review').reduce((a,x)=>{a[x.category]=(a[x.category]||0)+x.amount;return a},{})).sort((a,b)=>b[1]-a[1]).slice(0,9);
  const max=Math.max(1,...categories.map(x=>x[1]));
  const recent=all.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time)).slice(0,8);
- const top=pageIntro('MONEY OVERVIEW','지출을 용도별로, 한눈에','개인 · 편의점 · 풍월관을 분리합니다. 토토 정산과 금융 자산 이동은 가져오기 단계에서 제외합니다.',topFilters());
+ const top=pageIntro('MONEY OVERVIEW','매출과 지출을 한눈에','편의점 총매출 + 토토 확정 수수료를 수입으로 집계하고, 개인·편의점·풍월관 지출을 구분합니다.',topFilters());
  return top+
  '<div class="stat-grid">'+statCard('개인 소비',sum(personal),personal.length+'건 · 개인 장부','blue','◉')+
  statCard('편의점 매입 · 운영',sum(business),business.length+'건 · 편의점 장부','teal','▤')+
@@ -91,6 +140,10 @@ function dashboard(){
  '<div class="sales-overview-grid"><div><span>편의점 매출</span><strong>'+won(revenueTotal('store'))+'</strong></div>'+
  '<div><span>토토 월 확정 수수료</span><strong>'+won(revenueTotal('lotto'))+'</strong></div>'+
  '<div><span>매출 합계</span><strong>'+won(revenueTotal('store')+revenueTotal('lotto'))+'</strong></div></div></section>'+
+ '<section class="surface finance-overview"><div class="surface-head"><div><h2>수입 − 지출 · 장부 수지</h2><p>총매출 기준, 토토는 확정 수수료만 적용합니다. 미분류 지출은 제외되어 잠정 수지일 수 있습니다.</p></div><button class="btn subtle" data-nav="sales">월매출 관리 →</button></div>'+
+ '<div class="sales-overview-grid"><div><span>확정 수입</span><strong>'+won(financials(period).income)+'</strong></div>'+
+ '<div><span>분류 완료 지출</span><strong>'+won(financials(period).expenses)+'</strong></div>'+
+ '<div><span>장부 수지</span><strong>'+won(financials(period).balance)+'</strong></div></div></section>'+
  '<div class="dash-columns"><section class="surface"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>분류 완료한 거래 기준, 풍월관 금액은 별도 항목으로 표시</p></div></div>'+
  (categories.length?'<div class="category-chart">'+categories.map(([name,value])=>'<div class="chart-line"><div class="chart-meta"><span>'+E(name)+'</span><strong>'+won(value)+'</strong></div><div class="chart-bar"><i style="width:'+Math.max(2,value/max*100).toFixed(2)+'%"></i></div></div>').join('')+'</div>':'<div class="empty">금융내역을 가져오면 항목별 지출이 표시됩니다.</div>')+'</section>'+
  '<section class="surface summary-panel"><div class="surface-head"><div><h2>장부 구분</h2><p>고정지출 = 원본 시트 분류 · 고정비와 다름</p></div></div>'+
@@ -194,73 +247,167 @@ function salesValue(month,type){
  const entries=findSales(month,type);
  return {amount:sum(entries),count:entries.length,record:entries.length===1?entries[0]:null};
 }
+
+const storedProfit=month=>{
+ const profit=state.storeProfits?.[month];
+ return Number.isSafeInteger(profit)?profit:null;
+};
+const marginRate=(gross,profit)=>gross>0&&Number.isFinite(profit)?profit/gross*100:null;
+const marginDisplay=(gross,profit)=>marginRate(gross,profit)===null?'—':marginRate(gross,profit).toFixed(2)+'%';
+const monthlyLottoDays=month=>(state.dailyLotto||[]).filter(x=>x.date.slice(0,7)===month).sort((a,b)=>a.date.localeCompare(b.date));
+const estimatedCommission=(handle,rate=state.lottoRatePct)=>Math.round(Number(handle)*Number(rate)/100);
+function financials(selected=period){
+ const income=revenueTotal('store',selected)+revenueTotal('lotto',selected);
+ const expenses=state.records.filter(x=>x.direction==='expense'&&x.status==='confirmed'&&x.scope!=='excluded'&&x.scope!=='review'&&(selected==='all'||x.date.slice(0,7)===selected));
+ return {income,expenses:sum(expenses),balance:income-sum(expenses),unreviewed:sum(state.records.filter(x=>x.direction==='expense'&&x.status==='review'&&(selected==='all'||x.date.slice(0,7)===selected)))};
+}
 function revenueTotal(type,selected=period){
  return sum(state.records.filter(x=>x.direction==='income'&&x.category===SALES[type].category&&x.status!=='excluded'&&(selected==='all'||x.date.slice(0,7)===selected)));
 }
-function upsertSale(month,type,amount,note){
+function upsertSale(month,type,amount,note,netProfit){
  if(!isMonth(month)||!SALES[type]||!Number.isSafeInteger(amount)||amount<0)throw Error('월·금액을 확인하세요.');
  const existing=findSales(month,type);
  if(existing.length>1)throw Error('같은 달에 같은 매출 기록이 여러 건 있습니다. 자동 덮어쓰지 않았습니다.');
  if(existing.length){
    const record=existing[0];
    Object.assign(record,{amount,note,scope:'business',status:'confirmed',manual:true});
+   if(type==='store'&&netProfit!==undefined){if(netProfit===null)delete state.storeProfits[month];else state.storeProfits[month]=netProfit;}
    return 'updated';
  }
+ if(type==='store'&&netProfit!==undefined){if(netProfit===null)delete state.storeProfits[month];else state.storeProfits[month]=netProfit;}
  state.records.push({id:'manual-monthly-'+type+'-'+month,date:monthEnd(month),time:'',amount,
    direction:'income',scope:'business',ledgerType:'',category:SALES[type].category,subcategory:'',
    merchant:type==='store'?'편의점 POS 월마감':'토토 POS 월마감',payment:'',
    note,source:'manual',sourceSheet:'사이트 월 마감',status:'confirmed',manual:true,bankKey:''});
  return 'created';
 }
+
 function salesPage(){
- const m=isMonth(salesMonth)?salesMonth:ym();
- const monthData={store:salesValue(m,'store'),lotto:salesValue(m,'lotto')};
- const year=m.slice(0,4),months=Array.from({length:12},(_,i)=>year+'-'+String(i+1).padStart(2,'0'));
+ const m=isMonth(salesMonth)?salesMonth:ym(),d={store:salesValue(m,'store'),lotto:salesValue(m,'lotto')};
+ const profit=storedProfit(m),gross=d.store.amount,year=m.slice(0,4),f=financials(m);
+ const lottoDays=monthlyLottoDays(m),lottoDaySum=sum(lottoDays.map(x=>({amount:x.commission})));
  const forms=Object.entries(SALES).map(([type,cfg])=>{
-   const x=monthData[type];
-   return '<form class="sales-form" data-sale-type="'+type+'">'+
-   '<div class="sales-form-head"><div class="sales-type-icon '+type+'">'+(type==='store'?'▣':'◎')+'</div><div><h2>'+E(cfg.label)+'</h2>'+
-   '<p>'+(type==='store'?'편의점 POS에서 확인한 해당 월의 총매출을 직접 입력합니다.':'토토 POS의 월 확정 수수료를 입력합니다. 당첨금 송금·판매액 전체를 매출로 합산하지 않습니다.')+'</p></div></div>'+
-   '<div class="sales-current"><span>현재 등록 금액</span><strong>'+ (x.count?won(x.amount):'미등록')+'</strong></div>'+
-   (x.count>1?'<div class="sales-conflict">이 달에 '+x.count+'개의 같은 매출 기록이 있어 중복을 확인해야 합니다. 자동 수정은 중지됩니다.</div>':'')+
-   '<label class="sales-input-label" for="sales-amount-'+type+'">월 확정 금액 (원)</label>'+
-   '<input type="text" inputmode="numeric" autocomplete="off" id="sales-amount-'+type+'" name="amount" placeholder="예: 12,500,000" value="'+(x.count===1?E(String(x.amount.toLocaleString('ko-KR'))):'')+'" required>'+
-   '<label class="sales-input-label" for="sales-note-'+type+'">정산 메모 (선택)</label>'+
-   '<input type="text" id="sales-note-'+type+'" name="note" value="'+E(x.record?.note||'')+'" placeholder="월마감 정산 내역">'+
-   '<button type="submit" class="btn primary wide" '+(x.count>1?'disabled':'')+'>'+(x.count===1?'✓ 월매출 수정 저장':'＋ 월매출 등록')+' <span>→</span></button>'+
-   '</form>';
+   const x=d[type],store=type==='store';
+   return '<form class="sales-form" data-sale-type="'+type+'"><div class="sales-form-head"><div class="sales-type-icon '+type+'">'+(store?'▣':'◎')+
+   '</div><div><h2>'+E(store?'편의점 월매출':'토토 월 확정 수수료')+'</h2><p>'+
+   (store?'영수증의 총매출과 순이익을 입력합니다. 순이익은 수입에 중복 추가하지 않습니다.':
+   '토토는 일별 판매액 전체가 아닌 월 확정 수수료만 수입에 반영합니다.')+'</p></div></div>'+
+   '<div class="sales-current"><span>현재 확정 금액</span><strong>'+(x.count?won(x.amount):'미등록')+'</strong></div>'+
+   (x.count>1?'<div class="sales-conflict">동일 월 매출이 여러 건입니다. 중복 확인 전 수정 불가.</div>':'')+
+   '<label class="sales-input-label">월 '+(store?'총매출':'확정 수수료')+' (원)</label>'+
+   '<input type="text" inputmode="numeric" name="amount" value="'+(x.count===1?E(x.amount.toLocaleString('ko-KR')):'')+'" placeholder="금액 입력" required>'+
+   (store?'<label class="sales-input-label">월 순이익 (원)</label>'+
+    '<input type="text" inputmode="numeric" id="sales-profit-input" name="netProfit" value="'+(profit===null?'':E(profit.toLocaleString('ko-KR')))+'" placeholder="영수증의 순이익">'+
+    '<div class="sales-profit-preview"><span>순이익 ÷ 총매출</span><strong id="live-margin">'+marginDisplay(gross,profit)+'</strong></div>':
+    '<div class="sales-profit-preview"><span>일별 수수료 '+lottoDays.length+'일 합계</span><strong>'+won(lottoDaySum)+'</strong></div>'+
+    '<button type="button" class="btn subtle wide" data-nav="lotto">일별 판매액·수수료 입력 →</button>')+
+   '<label class="sales-input-label">정산 메모 (선택)</label><input type="text" name="note" value="'+E(x.record?.note||'')+'" placeholder="POS 마감 메모">'+
+   '<button class="btn primary wide" type="submit" '+(x.count>1?'disabled':'')+'>'+(x.count===1?'✓ 수정 저장':'＋ 등록')+' <span>→</span></button></form>';
  }).join('');
- const rows=months.map(month=>{
-   const a=salesValue(month,'store'),b=salesValue(month,'lotto');
-   return '<tr><td><b>'+month+'</b></td><td class="right">'+(a.count?won(a.amount):'—')+'</td>'+
-    '<td class="right">'+(b.count?won(b.amount):'—')+'</td>'+
-    '<td class="right">'+(a.count||b.count?won(a.amount+b.amount):'—')+'</td>'+
-    '<td><button type="button" class="row-edit" data-sales-select="'+month+'">수정</button></td></tr>';
+ const table=Array.from({length:12},(_,i)=>{
+   const month=year+'-'+String(i+1).padStart(2,'0'),a=salesValue(month,'store'),b=salesValue(month,'lotto'),p=storedProfit(month);
+   return '<tr><td><b>'+month+'</b></td><td class="right">'+(a.count?won(a.amount):'—')+'</td><td class="right">'+(p===null?'—':won(p))+
+   '</td><td class="right">'+marginDisplay(a.amount,p)+'</td><td class="right">'+(b.count?won(b.amount):'—')+
+   '</td><td class="right">'+(a.count||b.count?won(a.amount+b.amount):'—')+
+   '</td><td><button type="button" class="row-edit" data-sales-select="'+month+'">수정</button></td></tr>';
  }).join('');
- return pageIntro('MONTHLY SALES','월매출 직접 입력','기존에 사용하던 편의점 매출·토토 월 확정 수수료 입력을 복구했습니다. 뱅크샐러드에서는 지출만 가져오므로 월매출은 POS 기준으로 직접 입력합니다.',
+ return pageIntro('MONTHLY POS','월매출 입력','편의점은 월 총매출과 순이익을 입력하고 마진율을 자동 계산합니다. 장부 수지는 총매출 + 토토 확정 수수료 − 지출로 계산합니다.',
  '<label class="sales-month-control">정산 월 <input id="sales-month" type="month" value="'+E(m)+'"></label>')+
- '<div class="sales-metrics"><div><span>편의점 월매출</span><strong>'+won(monthData.store.amount)+'</strong></div>'+
- '<div><span>토토 월 확정 수수료</span><strong>'+won(monthData.lotto.amount)+'</strong></div>'+
- '<div><span>월 수입 합계</span><strong>'+won(monthData.store.amount+monthData.lotto.amount)+'</strong></div></div>'+
+ '<div class="sales-metrics"><div><span>편의점 총매출</span><strong>'+won(gross)+'</strong></div>'+
+ '<div><span>편의점 순이익</span><strong>'+(profit===null?'미등록':won(profit))+'</strong></div>'+
+ '<div><span>편의점 마진율</span><strong>'+marginDisplay(gross,profit)+'</strong></div>'+
+ '<div><span>토토 확정 수수료</span><strong>'+won(d.lotto.amount)+'</strong></div>'+
+ '<div><span>수입 합계 (총매출 + 수수료)</span><strong>'+won(f.income)+'</strong></div>'+
+ '<div><span>장부 수지 (수입 − 지출)</span><strong>'+won(f.balance)+'</strong></div></div>'+
  '<div class="sales-forms">'+forms+'</div>'+
- '<section class="surface"><div class="surface-head"><div><h2>'+year+'년 월별 매출 내역</h2>'+
- '<p>기존 구글 시트/가게부 V1에서 이관한 월매출도 표시됩니다. 같은 달 수정 시 기존 기록을 갱신합니다.</p></div></div>'+
- '<div class="table-scroll"><table class="records-table sales-history"><thead><tr><th>월</th><th class="right">편의점 매출</th><th class="right">토토 수수료</th><th class="right">매출 합계</th><th>입력</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>'+
- '<div class="notice"><b>중복 계산 방지</b><p>은행 계좌에 들어온 입금은 뱅크샐러드에서 가져오지 않습니다. 이 화면의 매출은 직접 입력한 월 확정 기록만 집계합니다. 토토 당첨금 송금 등은 계속 제외됩니다.</p></div>';
+ '<section class="surface"><div class="surface-head"><div><h2>'+year+'년 월별 수입</h2>'+
+ '<p>토토는 월 확정 수수료만 합산하며 일별 수수료는 대조용입니다.</p></div></div>'+
+ '<div class="table-scroll"><table class="records-table sales-history"><thead><tr><th>월</th><th class="right">총매출</th><th class="right">순이익</th><th class="right">마진율</th><th class="right">토토 수수료</th><th class="right">확정 수입 합계</th><th>관리</th></tr></thead><tbody>'+
+ table+'</tbody></table></div></section>'+
+ '<div class="notice"><b>계산 기준</b><p>편의점 순이익은 마진율 참고용입니다. 지출 차감 기준은 편의점 총매출과 토토 월 확정 수수료이며, 토토 판매액 전체·당첨금 지급·은행 입금 내역은 중복 합산하지 않습니다. 미분류 지출은 검토 후 반영됩니다.</p></div>';
 }
 function saveMonthlySale(form){
- const type=form.dataset.saleType,amountRaw=String(new FormData(form).get('amount')||'').replace(/[,\s]/g,''),note=String(new FormData(form).get('note')||'').trim();
- if(!/^\d+$/.test(amountRaw)){toast('금액은 0 이상의 숫자로 입력하세요.');return}
- const amount=Number(amountRaw);
- if(!Number.isSafeInteger(amount)){toast('금액이 너무 큽니다.');return}
- const old=JSON.stringify(state.records);
+ const data=new FormData(form),type=form.dataset.saleType,amount=numInput(data.get('amount')),
+   note=String(data.get('note')||'').trim();
+ if(!Number.isSafeInteger(amount)||amount<0){toast('월 금액은 0 이상의 숫자로 입력하세요.');return}
+ let profit;
+ if(type==='store'){
+   const raw=String(data.get('netProfit')??'').trim();profit=raw===''?null:signedInput(raw);
+   if(profit!==null&&!Number.isSafeInteger(profit)){toast('순이익을 올바르게 입력하세요.');return}
+ }
+ const before=JSON.stringify(state.records),beforeProfits=JSON.stringify(state.storeProfits);
  try{
-   const mode=upsertSale(salesMonth,type,amount,note);
-   if(!save()){state.records=JSON.parse(old);return}
-   render();toast(SALES[type].label+' '+(mode==='updated'?'수정':'등록')+' 완료: '+won(amount));
- }catch(err){state.records=JSON.parse(old);toast(err.message)}
+   const mode=upsertSale(salesMonth,type,amount,note,profit);
+   if(!save()){state.records=JSON.parse(before);state.storeProfits=JSON.parse(beforeProfits);return}
+   render();toast((type==='store'?'편의점 총매출':'토토 확정 수수료')+' '+(mode==='updated'?'수정':'등록')+' 완료');
+ }catch(err){state.records=JSON.parse(before);state.storeProfits=JSON.parse(beforeProfits);toast(err.message)}
 }
-
+function lottoPage(){
+ const month=isMonth(lottoMonth)?lottoMonth:ym(),parts=month.split('-').map(Number),days=new Date(parts[0],parts[1],0).getDate();
+ const daily=monthlyLottoDays(month),byDate=new Map(daily.map(x=>[x.date,x])),confirmed=salesValue(month,'lotto');
+ const dayTotal=daily.reduce((a,x)=>a+x.commission,0),handleTotal=daily.reduce((a,x)=>a+x.handle,0);
+ const complete=daily.length===days,maintenance=month==='2026-04';
+ const entries=Array.from({length:days},(_,i)=>{
+   const date=month+'-'+String(i+1).padStart(2,'0'),x=byDate.get(date),pause=maintenance&&i+1>=14&&i+1<=20;
+   return '<tr data-lotto-date="'+date+'"'+(pause?' class="lotto-pause"':'')+'><td><b>'+String(i+1).padStart(2,'0')+'일</b><small>'+date+'</small>'+
+    (pause?'<span class="lotto-pause-tag">발매 중단</span>':'')+'</td>'+
+    '<td><input data-lotto-input="handle" type="text" inputmode="numeric" aria-label="'+date+' 판매액" value="'+(x?E(x.handle.toLocaleString('ko-KR')):'')+'" placeholder="판매액"></td>'+
+    '<td><input data-lotto-input="commission" type="text" inputmode="numeric" aria-label="'+date+' 수수료" value="'+(x?E(x.commission.toLocaleString('ko-KR')):'')+'" placeholder="예상 자동계산"></td></tr>';
+ }).join('');
+ return pageIntro('LOTTO DAILY','토토 일별 매출','2026년 4월 14~20일 발매 중단은 정상 0원 기록입니다. 일별 판매액과 실제 수수료를 입력하고, 월 확정 수수료와 대조합니다.',
+ '<label class="sales-month-control">입력 월 <input id="lotto-month" type="month" value="'+month+'"></label>')+
+ '<div class="sales-metrics lotto-metrics"><div><span>일별 판매액 합계</span><strong>'+won(handleTotal)+'</strong></div>'+
+ '<div><span>일별 수수료 합계</span><strong>'+won(dayTotal)+'</strong></div>'+
+ '<div><span>월 확정 수수료</span><strong>'+(confirmed.count?won(confirmed.amount):'미확정')+'</strong></div>'+
+ '<div><span>일별 기록</span><strong>'+daily.length+' / '+days+'일</strong></div>'+
+ '<div><span>일별·확정 차이</span><strong>'+(confirmed.count===1?won(dayTotal-confirmed.amount):'—')+'</strong></div>'+
+ '<div><span>대조 상태</span><strong>'+(confirmed.count>1?'중복 확인 필요':confirmed.count===0?'미확정':dayTotal===confirmed.amount?'일치':'차이 확인')+'</strong></div></div>'+
+ '<section class="surface"><div class="surface-head"><div><h2>'+month+' 판매액·수수료 입력</h2><p>실제 수수료가 비어 있으면 예상 비율로 계산하며, 기존 실제 입력값은 덮어쓰지 않습니다.</p></div>'+
+ '<label class="lotto-rate">예상 수수료율 (%) <input id="lotto-rate" type="number" min="0" max="100" step="0.001" value="'+E(String(state.lottoRatePct??5.97))+'"></label></div>'+
+ '<form id="lotto-daily-form"><div class="table-scroll"><table class="records-table lotto-day-table"><thead><tr><th>날짜</th><th>판매액 (원)</th><th>실제 수수료 (원)</th></tr></thead><tbody>'+
+ entries+'</tbody></table></div><div class="lotto-form-actions"><span>빈 날짜는 변경하지 않습니다. 0원은 정상 기록으로 저장 가능합니다.</span>'+
+ '<button class="btn primary" type="submit">✓ 일별 기록 저장</button></div></form></section>'+
+ '<section class="surface"><div class="surface-head"><div><h2>월 확정 수수료</h2><p>일별 수수료를 월 수입으로 확정합니다. 일별 판매액 전체는 수입에 포함하지 않습니다.</p></div></div>'+
+ '<div class="lotto-confirm"><div class="summary-line"><span>일별 수수료 합계</span><strong>'+won(dayTotal)+'</strong></div>'+
+ '<div class="summary-line"><span>월 확정 수수료</span><strong>'+(confirmed.count?won(confirmed.amount):'미확정')+'</strong></div>'+
+ '<button class="btn primary" id="confirm-lotto" '+(!complete||confirmed.count>1?'disabled':'')+'>'+(confirmed.count?'일별 합계로 월 확정액 갱신':'일별 합계로 월 수수료 확정')+'</button>'+
+ (!complete?'<p class="incomplete-warning">기록이 없는 '+(days-daily.length)+'일을 먼저 입력해야 월 확정이 가능합니다.</p>':'')+
+ '<button class="btn subtle" data-nav="sales">월매출 입력 화면 →</button></div></section>';
+}
+function saveLottoDaily(form){
+ const rows=$$('tr[data-lotto-date]',form),updates=[],errors=[];
+ for(const tr of rows){
+   const date=tr.dataset.lottoDate,hraw=$('[data-lotto-input="handle"]',tr).value.trim(),craw=$('[data-lotto-input="commission"]',tr).value.trim();
+   if(!hraw&&!craw)continue;
+   if(!hraw){errors.push(date+' 판매액을 입력하세요');continue}
+   const handle=numInput(hraw),commission=craw===''?estimatedCommission(handle):numInput(craw);
+   if(!Number.isSafeInteger(handle)||handle<0||!Number.isSafeInteger(commission)||commission<0){errors.push(date+' 금액 형식 오류');continue}
+   updates.push({date,handle,commission,commissionEstimated:craw===''});
+ }
+ if(errors.length){toast(errors.slice(0,3).join(' / '));return}
+ if(!updates.length){toast('저장할 날짜가 없습니다.');return}
+ const before=JSON.stringify(state.dailyLotto),index=new Map(state.dailyLotto.map(x=>[x.date,x]));
+ for(const v of updates){
+   if(index.has(v.date))Object.assign(index.get(v.date),v);
+   else state.dailyLotto.push({id:'lotto-'+v.date,...v,sourceSheet:'사이트 일별 입력',sourceRow:null});
+ }
+ if(!save()){state.dailyLotto=JSON.parse(before);return}
+ render();toast('토토 일별 기록 '+updates.length+'일치를 저장했습니다. 월 확정 수입은 별도입니다.');
+}
+function confirmLotto(){
+ const month=lottoMonth,daily=monthlyLottoDays(month),days=new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();
+ if(daily.length!==days){toast('모든 날짜를 입력해야 확정할 수 있습니다.');return}
+ if(findSales(month,'lotto').length>1){toast('같은 월 수수료 중복 기록을 확인하세요.');return}
+ const total=daily.reduce((a,x)=>a+x.commission,0),prev=salesValue(month,'lotto');
+ if(!confirm(month+' 일별 수수료 합계 '+won(total)+'을 '+(prev.count?'기존 월 확정액 대신 저장':'월 확정 수입으로 등록')+'할까요?'+
+   (prev.count&&prev.amount!==total?'\n이전 월 확정액: '+won(prev.amount):'')))return;
+ const before=JSON.stringify(state.records);
+ try{
+   upsertSale(month,'lotto',total,prev.record?.note||'일별 수수료 합계로 확정');
+   if(!save()){state.records=JSON.parse(before);return}
+   render();toast(month+' 토토 월 수수료 확정: '+won(total));
+ }catch(err){state.records=JSON.parse(before);toast(err.message)}
+}
 function settingsPage(){
  return pageIntro('DATA & PRIVACY','데이터 · 설정','서버 이전 전까지 현재 자료는 이 브라우저에만 저장됩니다. 기존 v1 장부를 삭제하거나 덮어쓰지 않습니다.')+
  '<section class="settings-grid"><div class="surface settings-box"><div class="surface-head"><div><h2>데이터 백업</h2><p>금융 정보와 거래처가 포함된 개인 파일입니다.</p></div></div>'+
@@ -275,12 +422,14 @@ function render(){
  $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.status==='review'&&x.direction==='expense').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
- container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sales:salesPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
  $('#sidebar').classList.remove('open');
  setStatus('이 브라우저에 저장됨');
 }
 function navigate(p){
  if(!VIEWS[p])return;
+ if(p==='lotto'&&page==='sales')lottoMonth=salesMonth;
+ if(p==='sales'&&page==='lotto')salesMonth=lottoMonth;
  page=p;offset=0;reviewOffset=0;scopeFilter='all';typeFilter='all';q='';
  location.hash='#'+p;render();window.scrollTo(0,0);
 }
@@ -409,22 +558,35 @@ function commitBank(){
 }
 async function importLegacy(file){
  if(!file)return;
- let rows;
+ let rows,incomingDaily=[],incomingProfits={};
  try{
    const obj=JSON.parse(await file.text());
    if(obj.version===2&&Array.isArray(obj.records)){
      if(!confirm('가게부 V2 전체 백업 '+obj.records.length+'건을 복원하면 현재 V2 데이터를 교체합니다. 현재 기록을 먼저 JSON으로 백업하셨나요?'))return;
      const previous=state;
      state={...blank(),...obj};
+     if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
+     if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
      if(!save()){state=previous;return}
      preview=null;render();toast('V2 전체 백업을 복원했습니다.');return;
    }
    rows=migrateLegacy(obj);
+   incomingDaily=Array.isArray(obj.dailyLotto)?obj.dailyLotto:[];
+   incomingProfits=obj.storeProfits&&typeof obj.storeProfits==='object'&&!Array.isArray(obj.storeProfits)?obj.storeProfits:{};
  }catch(e){toast('원본 JSON을 읽을 수 없습니다: '+e.message);return}
  const existing=new Set(state.records.map(x=>x.id));
  const keyed=new Map(state.records.filter(x=>x.source==='legacy'&&x.sourceRow!=null&&x.sourceSheet)
    .map(x=>[x.sourceSheet+'|'+x.sourceRow,x]));
  const additions=[],updates=[];let conflicts=0;
+ const dailySeen=new Set((state.dailyLotto||[]).map(x=>x.date));
+ const dailyNew=[];
+ for(const raw of incomingDaily){
+   const entry=normalizeDailyLotto(raw);
+   if(!entry||dailySeen.has(entry.date))continue;
+   dailySeen.add(entry.date);dailyNew.push(entry);
+ }
+ const profitsNew=Object.entries(incomingProfits).filter(([month,raw])=>
+    isMonth(month)&&Number.isSafeInteger(Number(raw))&&state.storeProfits?.[month]===undefined);
  for(const entry of rows){
    const key=entry.sourceSheet+'|'+entry.sourceRow;
    const old=state.records.find(x=>x.id===entry.id)|| (entry.sourceRow==null?null:keyed.get(key));
@@ -435,8 +597,8 @@ async function importLegacy(file){
    }
    updates.push({old,entry});
  }
- if(!additions.length&&!updates.length){toast('이미 최신 원장입니다. 변경이 필요한 행 '+conflicts+'건은 덮어쓰지 않았습니다.');return}
- if(!confirm('새 거래 '+additions.length+'건을 추가하고 기존 원장 '+updates.length+'건의 시트 정보를 갱신할까요? 은행 결제와 연결된 거래처·결제정보는 보존합니다.'+(conflicts?' 원본 위치가 바뀐 의심 행 '+conflicts+'건은 유지합니다.':'')))return;
+ if(!additions.length&&!updates.length&&!dailyNew.length&&!profitsNew.length){toast('이미 최신 원장입니다. 변경이 필요한 행 '+conflicts+'건은 덮어쓰지 않았습니다.');return}
+ if(!confirm('새 거래 '+additions.length+'건, 기존 원장 갱신 '+updates.length+'건, 토토 일별 '+dailyNew.length+'일, 편의점 순이익 '+profitsNew.length+'개월을 복원할까요? 기존 직접 수정·은행 연결 정보는 보존합니다.'+(conflicts?' 의심 행 '+conflicts+'건은 유지합니다.':'')))return;
  for(const {old,entry} of updates){
    old.amount=entry.amount;old.category=entry.category;old.subcategory=entry.subcategory;
    old.payment=entry.payment;old.note=entry.note;old.sourceRow=entry.sourceRow;
@@ -464,8 +626,10 @@ async function importLegacy(file){
  }
  if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
  state.records.push(...additions);
- state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,updated:updates.length,linked:linkedBankIds.size,source:'legacy'});
- if(save()){render();toast('원본 신규 '+additions.length+'건 · 기존 갱신 '+updates.length+'건 · 은행 연결 '+linkedBankIds.size+'건')}
+ mergeDailyLotto(dailyNew);
+ mergeStoreProfits(Object.fromEntries(profitsNew));
+ state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,updated:updates.length,dailyAdded:dailyNew.length,profitsAdded:profitsNew.length,linked:linkedBankIds.size,source:'legacy'});
+ if(save()){render();toast('원본 신규 '+additions.length+'건 · 토토 일별 '+dailyNew.length+'일 · 편의점 순이익 '+profitsNew.length+'개월 복원')}
 }
 function download(name,contents,type){
  const url=URL.createObjectURL(new Blob([contents],{type}));
@@ -511,7 +675,8 @@ function onClick(event){
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
- if(target.dataset.salesSelect){salesMonth=target.dataset.salesSelect;render();return}
+ if(target.dataset.salesSelect){salesMonth=target.dataset.salesSelect;lottoMonth=salesMonth;render();return}
+ if(target.id==='confirm-lotto'){confirmLotto();return}
  if(target.id==='new-record'){editRecord();return}
  if(target.id==='commit-bank'){commitBank();return}
  if(target.id==='discard-import'){preview=null;render();return}
@@ -535,6 +700,11 @@ function onClick(event){
 function onChange(e){
  const el=e.target;
  if(el.id==='sales-month'){if(isMonth(el.value)){salesMonth=el.value;render()}return}
+ if(el.id==='lotto-month'){if(isMonth(el.value)){lottoMonth=el.value;render()}return}
+ if(el.id==='lotto-rate'){
+   const rate=Number(el.value);if(!Number.isFinite(rate)||rate<0||rate>100){toast('수수료율은 0~100% 사이로 입력하세요.');return}
+   state.lottoRatePct=rate;save();return
+ }
  if(el.id==='bank-file'){onBankFile(el.files?.[0]);el.value='';return}
  if(el.id==='legacy-file'){importLegacy(el.files?.[0]);el.value='';return}
  if(el.id==='period-filter'){period=el.value;offset=0;reviewOffset=0;render();return}
@@ -547,8 +717,25 @@ function init(){
  const route=location.hash.replace(/^#/,'');if(VIEWS[route])page=route;
  document.addEventListener('click',onClick);
  document.addEventListener('change',onChange);
- document.addEventListener('input',e=>{if(e.target.id==='query-filter')onChange(e)});
+ document.addEventListener('input',e=>{
+   if(e.target.id==='query-filter')onChange(e);
+   const form=e.target.closest?.('.sales-form[data-sale-type="store"]');
+   if(form&&['amount','netProfit'].includes(e.target.name)){
+     const gross=numInput(form.querySelector('[name="amount"]').value);
+     const raw=form.querySelector('[name="netProfit"]').value.trim(),profit=raw===''?null:signedInput(raw);
+     const el=form.querySelector('#live-margin');
+     if(el)el.textContent=marginDisplay(gross,profit);
+   }
+   if(e.target.matches?.('[data-lotto-input="handle"]')){
+     const row=e.target.closest('tr'),commission=row?.querySelector('[data-lotto-input="commission"]'),handle=numInput(e.target.value);
+     if(commission&&commission.value.trim()===''&&Number.isFinite(handle))commission.placeholder='예상 '+won(estimatedCommission(handle));
+   }
+ });
  $('#editor-form').addEventListener('submit',e=>{e.preventDefault();submitEditor(e.target)});
+ document.addEventListener('submit',e=>{
+   if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}
+   if(e.target.id==='lotto-daily-form'){e.preventDefault();saveLottoDaily(e.target)}
+ });
  document.addEventListener('submit',e=>{if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}});
  document.addEventListener('keydown',e=>{
    if(e.key==='Escape'){$('#sidebar').classList.remove('open')}
