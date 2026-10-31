@@ -19,6 +19,32 @@ const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(Stri
 const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
+/* Default Onnuri for repeated use at the EXACT recorded shop. No merchant names hardcoded. */
+const onnuriMerchantKey=name=>{
+ const k=G.normalizeMerchant(String(name||'').trim());
+ return /^(?:거래처미기재|구매처미확인|미분류|기타|알수없음|현금|이체)$/.test(k)?'':k;
+};
+function onnuriHistoryDefault(merchant,payment=''){
+ if(/온누리/.test(String(payment||'')))return {checked:true,auto:false};
+ if(/^(?:현금|계좌이체|송금)/.test(String(payment||'').trim()))return {checked:false,auto:false};
+ const key=onnuriMerchantKey(merchant);if(!key)return {checked:false,auto:false};
+ let yes=0,no=0;
+ for(const rec of state.records||[]){
+   if(rec.direction!=='expense'||rec.status==='excluded'||rec.onnuriAuto===true)continue;
+   if(onnuriMerchantKey(rec.merchant)!==key)continue;
+   if(isOnnuri(rec))yes++;else no++;
+ }
+ const checked=yes>=2&&yes*4>=(yes+no)*3&&(key.length>=4||(yes>=3&&no===0));
+ return {checked,auto:checked};
+}
+function syncEditorOnnuriDefault(){
+ if(editing!=='new')return;
+ const f=$('#editor-form'),el=f?.elements?.onnuri;
+ if(!el||el.dataset.onnuriTouched==='1')return;
+ const suggestion=onnuriHistoryDefault(f.elements.merchant.value,f.elements.payment.value);
+ el.checked=suggestion.checked;el.dataset.onnuriAuto=suggestion.auto?'1':'0';
+ el.title=suggestion.auto?'동일 가게의 과거 온누리 결제 이력으로 자동 체크됨':'';
+}
 const blank=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
@@ -1114,8 +1140,9 @@ async function processBank(file,range=bankImportRange){
        reason:cls.reason,proposedScope:cls.scope,reviewConflict:cls.scope!=='review'&&match.record.scope!==cls.scope});
      continue;
    }
+   const suggested=onnuriHistoryDefault(row.merchant,row.payment);
    const item={
-     id:'bank-'+key,bankKey:key,source:'bank',sourceSheet:'뱅크샐러드',onnuri:false,
+     id:'bank-'+key,bankKey:key,source:'bank',sourceSheet:'뱅크샐러드',onnuri:suggested.checked,onnuriAuto:suggested.auto,
      direction:'expense',date:row.date,time:row.time,amount:money(row.amount),
      merchant:row.merchant||'거래처 미기재',payment:row.payment,note:row.memo||'',
      bankMajor:row.major,bankMinor:row.minor,
@@ -1320,6 +1347,8 @@ function editRecord(id){
  f.elements.merchant.value=r?.merchant||'';
  f.elements.payment.value=r?.payment||'';
  f.elements.onnuri.checked=r?isOnnuri(r):false;
+ f.elements.onnuri.dataset.onnuriTouched='0';
+ f.elements.onnuri.dataset.onnuriAuto=r?.onnuriAuto?'1':'0';
  const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:(r?.payment?'원본 결제수단: '+r.payment:'');
  f.elements.scope.innerHTML=sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),r?.scope||'personal');
  f.elements.ledgerType.innerHTML=sheetOptions(Object.entries(GROUP),r?.ledgerType||'consumption');
@@ -1330,6 +1359,7 @@ function editRecord(id){
  if(!r?.subcategory&&r?.scope==='windmoon')f.elements.subcategory.value='풍월관';
  f.elements.note.value=r?.note||'';
  updateEditorSuggestions();
+ syncEditorOnnuriDefault();
  dlg.showModal();
 }
 function submitEditor(f){
@@ -1337,7 +1367,12 @@ function submitEditor(f){
  const merchant=String(data.get('merchant')||'').trim();
  if(!data.get('date')||!(amt>0)||!merchant){toast('날짜·금액·거래처를 입력하세요.');return}
  const scope=String(data.get('scope')),ledgerType=String(data.get('ledgerType')),category=String(data.get('category')||'').trim();
- const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),onnuri:data.has('onnuri'),note:String(data.get('note')||''),scope,ledgerType,category:category||'기타',subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true,direction:'expense'};
+ const previous=editing!=='new'?state.records.find(x=>x.id===editing):null;
+ const touched=f.elements.onnuri.dataset.onnuriTouched==='1';
+ if(editing==='new'&&!touched)syncEditorOnnuriDefault();
+ const auto=editing==='new'?f.elements.onnuri.dataset.onnuriAuto==='1':!!previous?.onnuriAuto;
+ const entry={date:String(data.get('date')),amount:amt,merchant,payment:String(data.get('payment')||''),
+ onnuri:data.has('onnuri'),onnuriAuto:auto&&!touched,onnuriManual:touched||!!previous?.onnuriManual,note:String(data.get('note')||''),scope,ledgerType,category:category||'기타',subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true,direction:'expense'};
  normalizeWindmoon(entry);
  Object.assign(entry,canonicalCategory(entry.ledgerType,entry.category,entry.subcategory));
  if(!addInputCategories([entry]))return;
@@ -1399,11 +1434,13 @@ function onClick(event){
 }
 function onChange(e){
  const el=e.target;
+ if(el.id==='edit-onnuri'){el.dataset.onnuriTouched='1';el.dataset.onnuriAuto='0';return}
  if(el.dataset.onnuriId){
    const x=state.records.find(r=>r.id===el.dataset.onnuriId);
    if(!x||x.direction!=='expense')return;
-   const was=x.onnuri;x.onnuri=!!el.checked;
-   if(!save()){x.onnuri=was;return}
+   const old={onnuri:x.onnuri,onnuriAuto:x.onnuriAuto,onnuriManual:x.onnuriManual};
+   x.onnuri=!!el.checked;x.onnuriAuto=false;x.onnuriManual=true;
+   if(!save()){Object.assign(x,old);return}
    render();toast(x.onnuri?'온누리상품권 결제로 표시했습니다.':'원본 결제수단 표시로 변경했습니다.');
    return;
  }
