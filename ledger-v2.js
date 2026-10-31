@@ -11,7 +11,7 @@ const VIEWS={dashboard:'전체 요약',review:'미분류 검토함',records:'전
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
-const blank=()=>({version:2,records:[],customRules:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
+const blank=()=>({version:2,records:[],customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
@@ -138,10 +138,10 @@ function recordsPage(){
 }
 function importPage(){
  return pageIntro('DATA IMPORT','금융내역 가져오기','모든 분석은 브라우저 내부에서만 실행됩니다. 민감한 금융 엑셀은 공개 GitHub나 외부 서버에 업로드하지 않습니다.')+
- '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>01</span><div><h2>뱅크샐러드 엑셀</h2><p>2026년 1월 이후 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
+ '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>02</span><div><h2>뱅크샐러드 엑셀</h2><p>2026년 1월 이후 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
- '<section class="surface upload-panel"><div class="step"><span>02</span><div><h2>기존 가게부 가져오기</h2><p>구글 시트 이관 JSON을 기준 장부로 합칩니다. 예전에 브라우저에 저장한 자료는 자동 복사하며 원본은 유지합니다.</p></div></div>'+
+ '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>기존 가게부 가져오기</h2><p>구글 시트 이관 JSON을 기준 장부로 합칩니다. 예전에 브라우저에 저장한 자료는 자동 복사하며 원본은 유지합니다.</p></div></div>'+
  '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 이관 파일 · 데이터 백업 파일</small></label>'+
  '<div class="notice compact"><b>원본 보존</b><p>기존 현금 주류 발주와 오프라인 거래는 뱅크샐러드에 없다고 해서 삭제하지 않습니다.</p></div></section></div>'+
  (preview?importPreview():importEmpty())+
@@ -220,7 +220,8 @@ function bankKey(raw){
  return (h1>>>0).toString(36)+'-'+(h2>>>0).toString(36);
 }
 function matchOld(row,candidates,used){
- const eligible=candidates.filter(x=>!used.has(x.id)&&!x.bankKey&&x.amount===money(row.amount)&&dateDiff(x.date,row.date)<=1&&!(x.category==='발주'&&x.subcategory==='주류'));
+ const eligible=candidates.filter(x=>!used.has(x.id)&&!x.bankKey&&x.amount===money(row.amount)&&dateDiff(x.date,row.date)<=1&&!(x.category==='발주'&&x.subcategory==='주류')&&
+   !(x.payment==='현금/송금'&&/(?:카드|POINT|CLASSIC|와우)/i.test(row.payment||'')));
  const exact=eligible.filter(x=>x.date===row.date);
  let pool=exact.length?exact:eligible;
  if(pool.length===1)return {record:pool[0],confidence:exact.length?1:0.6};
@@ -246,7 +247,12 @@ async function processBank(file){
    const root=fingerprint(row,0),i=duplicates.get(root)||0;duplicates.set(root,i+1);
    const key=bankKey(fingerprint(row,i));
    if(existing.has(key)){count('이미 가져온 거래');continue}
-   const cls=G.classify(row,state.customRules);
+   let cls=G.classify(row,state.customRules);
+   const savedRent=state.rentRecipients?.[G.normalizeMerchant(row.merchant)];
+   if(row.type==='이체'&&row.amount<0&&savedRent&&savedRent.amount===money(row.amount)){
+     cls={action:'keep',scope:savedRent.scope,status:'confirmed',ledgerType:'fixed',
+       category:savedRent.category,subcategory:savedRent.subcategory,reason:'이전 원장으로 확인된 월세·임대료 수취인'};
+   }
    // Link rent transfers to verified source-sheet rent entries, without storing
    // any tenant/payee names or amounts as constants in the public code.
    if(cls.action==='skip'){
@@ -297,12 +303,16 @@ function commitBank(){
  if(!preview)return;
  if(!confirm(preview.newItems.length+'건을 등록하고 기존 시트의 거래처 '+preview.links.length+'건을 연결할까요? 미분류는 확정 지출로 계산하지 않습니다.'))return;
  const map=new Map(state.records.map(x=>[x.id,x]));
+ state.rentRecipients=state.rentRecipients||{};
  for(const link of preview.links){
    const x=map.get(link.id);if(!x)continue;
    x.bankKey=link.bankKey;
    if(!x.merchant)x.merchant=link.merchant||'';
    if(!x.bankPayment)x.bankPayment=link.payment||'';
    if(link.reviewConflict){x.scope='review';x.status='review';x.reason='기존 시트 분류와 금융 거래의 지역 규칙이 달라 확인 필요'}
+   if(((x.category==='집'&&x.subcategory==='월세')||(x.category==='가게'&&x.subcategory==='임대료'))&&link.merchant){
+     state.rentRecipients[G.normalizeMerchant(link.merchant)]={amount:x.amount,scope:x.scope,category:x.category,subcategory:x.subcategory};
+   }
  }
  state.records.push(...preview.newItems);
  state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount});
@@ -346,6 +356,10 @@ async function importLegacy(file){
    original.bankKey=match.bankKey;
    if(!original.merchant)original.merchant=match.merchant;
    original.bankPayment=match.payment;
+   if(((original.category==='집'&&original.subcategory==='월세')||(original.category==='가게'&&original.subcategory==='임대료'))&&match.merchant){
+     state.rentRecipients=state.rentRecipients||{};
+     state.rentRecipients[G.normalizeMerchant(match.merchant)]={amount:original.amount,scope:original.scope,category:original.category,subcategory:original.subcategory};
+   }
    if(match.scope!=='review'&&original.scope!==match.scope){
      original.status='review';original.scope='review';
      original.reason='원본 시트와 뱅크샐러드의 분류가 달라 확인 필요';
