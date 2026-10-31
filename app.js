@@ -567,6 +567,7 @@
     if(sheetPicker&&!sheetPicker.panel.contains(e.target))closeSheetPicker();
   },true);
   document.addEventListener('keydown',e=>{
+    if(e.isComposing||e.keyCode===229)return; // Do not interrupt Korean IME confirmation.
     const grid=e.target?.dataset?.grid;
     if(grid==='sheet'||grid==='lotto'){
       const row=Number(e.target.dataset.row),col=e.target.dataset.col;
