@@ -95,7 +95,7 @@ const numInput=raw=>{
 const signedInput=raw=>{const s=String(raw??'').replace(/[,\s₩원]/g,'');return /^-?\d+$/.test(s)?Number(s):NaN;};
 const normalizeDailyLotto=x=>{
  const date=String(x?.date||'');
- if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!date.startsWith('2026-'))return null;
+ if(!/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00Z')))return null;
  const commission=Number(x.commission),handle=Number(x.handle);
  if(!Number.isSafeInteger(commission)||commission<0||!Number.isSafeInteger(handle)||handle<0)return null;
  return {id:String(x.id||'lotto-'+date),date,commission,handle,
@@ -828,9 +828,9 @@ function importPage(){
  '<label>종료일 <input id="bank-import-to" type="date" value="'+E(bankImportRange.to)+'"></label></div>'+
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
- '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>기존 가게부 가져오기</h2><p>구글 시트 이관 JSON을 기준 장부로 합칩니다. 예전에 브라우저에 저장한 자료는 자동 복사하며 원본은 유지합니다.</p></div></div>'+
+ '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>JSON 안전 병합</h2><p>오래된 V2 백업이나 기존 시트 이관 JSON도 기존 장부를 덮어쓰지 않습니다. 같은 거래는 유지하고 없는 거래·날짜만 추가하며, 변경 전 복구용 JSON을 다운로드합니다.</p></div></div>'+
  '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 이관 파일 · 데이터 백업 파일</small></label>'+
- '<div class="notice compact"><b>원본 보존</b><p>기존 현금 주류 발주와 오프라인 거래는 뱅크샐러드에 없다고 해서 삭제하지 않습니다.</p></div></section></div>'+
+ '<div class="notice compact"><b>기존 데이터 보존 · 전체 덮어쓰기 금지</b><p>오래된 파일을 선택해도 기존 거래, 직접 수정한 분류, 온누리 체크와 사용자 규칙은 유지됩니다. 동일 거래의 과거 분류는 자동으로 되돌리지 않습니다.</p></div></section></div>'+
  (preview?importPreview():importEmpty())+
  '<div class="notice"><b>전액을 자동으로 지출 처리하지 않습니다.</b><p>온누리상품권 충전, 카드대금 납부, 주식투자, 토토 운영대금과 고객 송금은 제외합니다. 월세·가게 임대료는 확인된 수취인·금액만 예외 처리합니다.</p></div>';
 }
@@ -1252,91 +1252,139 @@ function commitBank(){
  const count=preview.newItems.length;preview=null;
  if(save()){render();navigate('review');toast('거래 '+count+'건을 가져왔습니다. 미분류부터 확인하세요.')}
 }
+/* Backup imports are strictly non-destructive. Even a year-old V2 snapshot may
+   only add missing records/dates; it cannot replace or silently edit newer data. */
+function planSafeLedgerMerge(current,incoming){
+ if(!incoming||incoming.version!==2||!Array.isArray(incoming.records))throw Error('지원하지 않는 가게부 JSON 형식입니다.');
+ const currentRows=Array.isArray(current.records)?current.records:[];
+ const ids=new Set(currentRows.map(x=>String(x.id||'')).filter(Boolean));
+ const banks=new Set(currentRows.flatMap(x=>[x.bankKey,...(Array.isArray(x.extraBankKeys)?x.extraBankKeys:[])]).filter(Boolean));
+ const sourceKey=x=>x.source==='legacy'&&x.sourceSheet&&x.sourceRow!=null?'legacy|'+x.sourceSheet+'|'+x.sourceRow:'';
+ const sources=new Set(currentRows.map(sourceKey).filter(Boolean));
+ const fingerprint=x=>{
+   if(!x.merchant||!x.date||!Number.isSafeInteger(Number(x.amount)))return '';
+   return [x.direction||'expense',x.date,x.time||'',Number(x.amount),
+     G.normalizeMerchant(x.merchant),G.normalizeMerchant(x.payment||'')].join('¦');
+ };
+ const currentCounts=new Map();
+ for(const x of currentRows){const k=fingerprint(x);if(k)currentCounts.set(k,(currentCounts.get(k)||0)+1)}
+ const matchedCounts=new Map();
+ const incomingIds=new Set(),incomingBank=new Set(),incomingSource=new Set();
+ let duplicates=0,conflicts=0,invalid=0;
+ const additions=[];
+ const byId=new Map(currentRows.filter(x=>x.id!=null).map(x=>[String(x.id),x]));
+ for(const raw of incoming.records){
+   if(!raw||typeof raw!=='object'||!String(raw.date||'').match(/^\d{4}-\d{2}-\d{2}$/)
+      ||!Number.isSafeInteger(Number(raw.amount))||Number(raw.amount)<0
+      ||!['expense','income','transfer'].includes(raw.direction)){invalid++;continue}
+   const x={...raw},id=String(x.id||''),b=String(x.bankKey||''),s=sourceKey(x);
+   if(id&&(ids.has(id)||incomingIds.has(id))){
+     if(ids.has(id)){
+       const old=byId.get(id);
+       if(old&&['date','amount','direction','scope','ledgerType','category','subcategory','onnuri','payment','note'].some(field=>
+          String(old[field]??'')!==String(x[field]??'')))conflicts++;
+     }
+     duplicates++;continue;
+   }
+   if(b&&(banks.has(b)||incomingBank.has(b))||s&&(sources.has(s)||incomingSource.has(s))){
+     duplicates++;continue;
+   }
+   const signature=fingerprint(x);
+   const used=matchedCounts.get(signature)||0;
+   if(signature&&used<(currentCounts.get(signature)||0)){
+     matchedCounts.set(signature,used+1);duplicates++;continue;
+   }
+   if(signature&&additions.some(y=>fingerprint(y)===signature&&
+      String(y.id||'')===id&&id)){duplicates++;continue}
+   if(!id)x.id='import-'+uid();
+   additions.push(x);
+   incomingIds.add(String(x.id));
+   if(b)incomingBank.add(b);
+   if(s)incomingSource.add(s);
+ }
+ const presentDays=new Set((current.dailyLotto||[]).map(x=>x.date));
+ const dailyAdd=[];
+ for(const raw of Array.isArray(incoming.dailyLotto)?incoming.dailyLotto:[]){
+   const normalized=normalizeDailyLotto(raw);
+   if(normalized&&!presentDays.has(normalized.date)){
+     dailyAdd.push(normalized);presentDays.add(normalized.date);
+   }
+ }
+ const profitAdd={};
+ for(const [month,value] of Object.entries(incoming.storeProfits||{})){
+   if(isMonth(month)&&Number.isSafeInteger(Number(value))&&current.storeProfits?.[month]==null)
+     profitAdd[month]=Number(value);
+ }
+ const isEmpty=!currentRows.length&&!(current.dailyLotto||[]).length
+   &&!Object.keys(current.storeProfits||{}).length
+   &&!Object.keys(current.customRules||{}).length
+   &&!(current.imports||[]).length;
+ const base=isEmpty?{...blank(),...incoming}:current;
+ // Existing custom rules, merchant lists, taxonomies, and edits always win.
+ const rules={...(base.customRules||{})},rent={...(base.rentRecipients||{})};
+ for(const [k,v] of Object.entries(incoming.customRules||{}))if(!(k in rules))rules[k]=v;
+ for(const [k,v] of Object.entries(incoming.rentRecipients||{}))if(!(k in rent))rent[k]=v;
+ const oldBankAudit=Array.isArray(base.excludedAudit)?base.excludedAudit:[];
+ const auditKeys=new Set(oldBankAudit.map(x=>x.bankKey).filter(Boolean));
+ const audit=[...oldBankAudit];
+ for(const x of Array.isArray(incoming.excludedAudit)?incoming.excludedAudit:[]){
+   if(x?.bankKey&&!auditKeys.has(x.bankKey)){audit.push(x);auditKeys.add(x.bankKey)}
+ }
+ const next={...base,version:2,records:[...currentRows,...additions],
+   dailyLotto:[...(current.dailyLotto||[]),...dailyAdd],
+   storeProfits:{...(current.storeProfits||{}),...profitAdd},
+   customRules:rules,rentRecipients:rent,excludedAudit:audit};
+ const currentLast=currentRows.reduce((v,x)=>x.date>v?x.date:v,'');
+ const incomingLast=incoming.records.reduce((v,x)=>x?.date>v?x.date:v,'');
+ return {next,added:additions.length,duplicates,conflicts,invalid,
+   dailyAdded:dailyAdd.length,profitsAdded:Object.keys(profitAdd).length,
+   oldFile:!!(currentLast&&incomingLast&&incomingLast<currentLast),
+   currentLast,incomingLast};
+}
 async function importLegacy(file){
  if(!file)return;
- let rows,incomingDaily=[],incomingProfits={};
+ let raw,incoming;
  try{
-   const obj=JSON.parse(await file.text());
-   if(obj.version===2&&Array.isArray(obj.records)){
-     if(!confirm('가게부 V2 전체 백업 '+obj.records.length+'건을 복원하면 현재 V2 데이터를 교체합니다. 현재 기록을 먼저 JSON으로 백업하셨나요?'))return;
-     const previous=state;
-     state={...blank(),...obj};
-     if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
-     if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
-     if(!save()){state=previous;return}
-     preview=null;render();toast('V2 전체 백업을 복원했습니다.');return;
-   }
-   rows=migrateLegacy(obj);
-   incomingDaily=Array.isArray(obj.dailyLotto)?obj.dailyLotto:[];
-   incomingProfits=obj.storeProfits&&typeof obj.storeProfits==='object'&&!Array.isArray(obj.storeProfits)?obj.storeProfits:{};
- }catch(e){toast('원본 JSON을 읽을 수 없습니다: '+e.message);return}
- const existing=new Set(state.records.map(x=>x.id));
- const keyed=new Map(state.records.filter(x=>x.source==='legacy'&&x.sourceRow!=null&&x.sourceSheet)
-   .map(x=>[x.sourceSheet+'|'+x.sourceRow,x]));
- const additions=[],updates=[];let conflicts=0;
- const dailySeen=new Set((state.dailyLotto||[]).map(x=>x.date));
- const dailyNew=[];
- for(const raw of incomingDaily){
-   const entry=normalizeDailyLotto(raw);
-   if(!entry||dailySeen.has(entry.date))continue;
-   dailySeen.add(entry.date);dailyNew.push(entry);
- }
- const profitsNew=Object.entries(incomingProfits).filter(([month,raw])=>
-    isMonth(month)&&Number.isSafeInteger(Number(raw))&&state.storeProfits?.[month]===undefined);
- for(const entry of rows){
-   const key=entry.sourceSheet+'|'+entry.sourceRow;
-   const old=state.records.find(x=>x.id===entry.id)|| (entry.sourceRow==null?null:keyed.get(key));
-   if(!old){additions.push(entry);continue}
-   if(old.manual)continue;
-   if(old.date!==entry.date||old.direction!==entry.direction){
-     conflicts++;continue; // a reordered/modified source row must not overwrite a different transaction.
-   }
-   updates.push({old,entry});
- }
- if(!additions.length&&!updates.length&&!dailyNew.length&&!profitsNew.length){toast('이미 최신 원장입니다. 변경이 필요한 행 '+conflicts+'건은 덮어쓰지 않았습니다.');return}
- if(!confirm('새 거래 '+additions.length+'건, 기존 원장 갱신 '+updates.length+'건, 토토 일별 '+dailyNew.length+'일, 편의점 순이익 '+profitsNew.length+'개월을 복원할까요? 기존 직접 수정·은행 연결 정보는 보존합니다.'+(conflicts?' 의심 행 '+conflicts+'건은 유지합니다.':'')))return;
- for(const {old,entry} of updates){
-   old.amount=entry.amount;old.category=entry.category;old.subcategory=entry.subcategory;
-   old.payment=entry.payment;old.note=entry.note;old.sourceRow=entry.sourceRow;
-   // Retain manually corrected ownership, attached bank merchant and link.
-   if(old.status!=='review'){old.scope=entry.scope;old.ledgerType=entry.ledgerType}
-   normalizeWindmoon(old);
-   Object.assign(old,canonicalCategory(old.ledgerType,old.category,old.subcategory));
- }
- const linkedBankIds=new Set();
- for(const original of additions){
-   if(original.direction!=='expense'||(original.category==='발주'&&original.subcategory==='주류'))continue;
-   const matching=state.records.filter(b=>b.source==='bank'&&b.direction==='expense'&&!linkedBankIds.has(b.id)&&
-     b.amount===original.amount&&b.date===original.date&&b.status!=='excluded');
-   if(matching.length!==1)continue;
-   const match=matching[0];linkedBankIds.add(match.id);
-   original.bankKey=match.bankKey;
-   if(!original.merchant)original.merchant=match.merchant;
-   original.bankPayment=match.payment;
-   if(/온누리/.test(String(original.payment||'')))original.onnuri=true;
-   if(((original.category==='집'&&original.subcategory==='월세')||(original.category==='가게'&&original.subcategory==='임대료'))&&match.merchant){
-     state.rentRecipients=state.rentRecipients||{};
-     state.rentRecipients[G.normalizeMerchant(match.merchant)]={amount:original.amount,scope:original.scope,category:original.category,subcategory:original.subcategory};
-   }
-   if(match.scope!=='review'&&original.scope!==match.scope){
-     original.status='review';original.scope='review';
-     original.reason='원본 시트와 뱅크샐러드의 분류가 달라 확인 필요';
-   }
- }
- if(linkedBankIds.size)state.records=state.records.filter(x=>!linkedBankIds.has(x.id));
- for(const x of additions){normalizeWindmoon(x);Object.assign(x,canonicalCategory(x.ledgerType,x.category,x.subcategory))}
- state.records.push(...additions);
- mergeDailyLotto(dailyNew);
- mergeStoreProfits(Object.fromEntries(profitsNew));
- state.imports.push({at:new Date().toISOString(),name:file.name,added:additions.length,updated:updates.length,dailyAdded:dailyNew.length,profitsAdded:profitsNew.length,linked:linkedBankIds.size,source:'legacy'});
- if(save()){render();toast('원본 신규 '+additions.length+'건 · 토토 일별 '+dailyNew.length+'일 · 편의점 순이익 '+profitsNew.length+'개월 복원')}
+   raw=JSON.parse(await file.text());
+   incoming=raw?.version===2&&Array.isArray(raw.records)?raw:{
+     version:2,records:migrateLegacy(raw),
+     dailyLotto:Array.isArray(raw?.dailyLotto)?raw.dailyLotto:[],
+     storeProfits:raw?.storeProfits&&typeof raw.storeProfits==='object'?raw.storeProfits:{}
+   };
+ }catch(err){toast('JSON 읽기 실패: '+err.message);return}
+ let plan;
+ try{plan=planSafeLedgerMerge(state,incoming)}
+ catch(err){toast(err.message);return}
+ const count=plan.added+plan.dailyAdded+plan.profitsAdded;
+ if(!count){toast('이미 등록된 자료입니다. 기존 거래 '+plan.duplicates+'건을 유지하며 아무것도 변경하지 않았습니다.');return}
+ const warning=plan.oldFile?'\n⚠ 이 파일의 최근 거래일('+plan.incomingLast+')이 현재 장부('+plan.currentLast+')보다 오래되었습니다. 기존 기록은 삭제되지 않습니다.':'';
+ const message='안전 병합으로 등록합니다.\n\n새 거래 '+plan.added+'건 / 토토 일별 '+plan.dailyAdded+
+   '일 / 월 순이익 '+plan.profitsAdded+'개월 추가\n중복 '+plan.duplicates+'건 건너뜀'+
+   (plan.conflicts?'\n다르게 수정된 기존 거래 '+plan.conflicts+'건: 현재 값 유지':'')+
+   (plan.invalid?'\n파일 내 형식 오류 '+plan.invalid+'건: 추가하지 않음':'')+
+   warning+'\n\n현재 등록된 거래·수정 내용·온누리 체크는 덮어쓰거나 삭제하지 않습니다.'+
+   '\n병합 전 자동 백업 파일도 다운로드합니다. 진행할까요?';
+ if(!confirm(message))return;
+ // User-owned recovery snapshot before the only write. No public/server upload.
+ try{
+   download('가게부_V2_병합전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+     JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8');
+ }catch(err){toast('자동 백업 파일 생성 실패: 데이터를 변경하지 않았습니다.');return}
+ const previous=state;
+ plan.next.imports=[...(state.imports||[]),{at:new Date().toISOString(),
+   name:file.name,source:'safe-merge',added:plan.added,duplicates:plan.duplicates,
+   conflicts:plan.conflicts,dailyAdded:plan.dailyAdded,profitsAdded:plan.profitsAdded}];
+ state=plan.next;
+ if(!save()){state=previous;return}
+ preview=null;render();
+ toast('안전 병합 완료: 거래 '+plan.added+'건 추가 · 기존 거래 '+plan.duplicates+'건 유지');
 }
 function download(name,contents,type){
  const url=URL.createObjectURL(new Blob([contents],{type}));
  const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function exportJSON(){download('가게부_V2_개인백업_'+now()+'.json',JSON.stringify(state,null,2),'application/json;charset=utf-8')}
+function exportJSON(){download('가게부_V2_개인백업_'+now()+'.json',JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
 function exportCSV(){
  const headers=['날짜','시간','거래처','실제 결제수단','뱅샐 등록 카드·원본 결제수단','온누리 사용','금액','사용처','지출종류','대분류','소분류','상태','원본','메모'];
  const rows=state.records.filter(x=>x.direction==='expense').map(x=>[x.date,x.time,x.merchant,paymentLabel(x),x.bankPayment||x.payment||'',isOnnuri(x)?'예':'아니오',x.amount,LABEL[x.scope]||x.scope,GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note]);
