@@ -610,10 +610,10 @@ function handleTaxForm(form){
 }
 
 
-const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note'];
-const SHEET_TITLES={date:'날짜',amount:'금액 (원)',scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',merchant:'거래처',payment:'결제수단',note:'메모'};
+const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note','onnuri'];
+const SHEET_TITLES={date:'날짜',amount:'금액 (원)',scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',merchant:'거래처',payment:'결제수단',note:'메모',onnuri:'온누리'};
 const sheetData={rows:[],date:now(),limit:200};
-const sheetNewRow=()=>({date:sheetData.date,amount:'',scope:'personal',scopeManual:false,ledgerType:'consumption',category:'',subcategory:'',merchant:'',payment:'',note:''});
+const sheetNewRow=()=>({date:sheetData.date,amount:'',scope:'personal',scopeManual:false,ledgerType:'consumption',category:'',subcategory:'',merchant:'',payment:'',note:'',onnuri:false,onnuriAuto:false,onnuriTouched:false});
 const sheetOptions=(items,current)=>items.map(([val,label])=>'<option value="'+E(val)+'"'+(val===current?' selected':'')+'>'+E(label)+'</option>').join('');
 function sheetSelectOptions(field,row){
  if(field==='scope')return sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),row.scope);
@@ -624,6 +624,7 @@ function sheetSelectOptions(field,row){
 function sheetCell(field,row,index){
  const v=String(row[field]??''),attrs='data-sheet-field="'+field+'" data-sheet-index="'+index+'" aria-label="'+(index+1)+'행 '+SHEET_TITLES[field]+'"';
  if(['scope','ledgerType','category'].includes(field))return '<select '+attrs+'>'+sheetSelectOptions(field,row)+'</select>';
+ if(field==='onnuri')return '<label class="sheet-onnuri-choice" title="온누리상품권 결제 여부"><input '+attrs+' type="checkbox"'+(row.onnuri?' checked':'')+'></label>';
  if(field==='subcategory')return '<input '+attrs+' type="text" list="sheet-sub-'+index+'" placeholder="소분류 (선택)" value="'+E(v)+'"><datalist id="sheet-sub-'+index+'">'+
    (categoriesFor(row.ledgerType)[row.category]||[]).map(x=>'<option value="'+E(x)+'"></option>').join('')+'</datalist>';
  return '<input '+attrs+' type="'+(field==='date'?'date':'text')+'"'+(field==='amount'?' inputmode="numeric"':'')+
@@ -653,10 +654,21 @@ function readSheetCells(){
  const table=$('#sheet-entry-table');if(!table)return;
  const rows=$('tbody tr',table);
  sheetData.rows=rows.map((tr,index)=>{
-   const out={scopeManual:!!sheetData.rows[index]?.scopeManual};
-   for(const f of SHEET_FIELDS)out[f]=tr.querySelector('[data-sheet-field="'+f+'"]')?.value??'';
+   const prev=sheetData.rows[index]||{};
+   const out={...prev,scopeManual:!!prev.scopeManual};
+   for(const field of SHEET_FIELDS){
+     const el=tr.querySelector('[data-sheet-field="'+field+'"]');
+     out[field]=field==='onnuri'?!!el?.checked:(el?.value??'');
+   }
    return out;
  });
+}
+function syncSheetOnnuri(row,tr){
+ if(!row||row.onnuriTouched)return;
+ const suggestion=onnuriHistoryDefault(row.merchant,row.payment);
+ row.onnuri=suggestion.checked;row.onnuriAuto=suggestion.auto;
+ const checkbox=tr?.querySelector('[data-sheet-field="onnuri"]');
+ if(checkbox)checkbox.checked=row.onnuri;
 }
 function rerenderSheet(focusIndex,focusField){
  const scroll=$('#sheet-entry-scroll'),top=scroll?.scrollTop,left=scroll?.scrollLeft;
@@ -666,7 +678,7 @@ function rerenderSheet(focusIndex,focusField){
  next?.focus();
 }
 function sheetRowFromInput(row,i){
- const content=SHEET_FIELDS.some(k=>!['date','scope','ledgerType'].includes(k)&&String(row[k]||'').trim());
+ const content=SHEET_FIELDS.some(k=>k==='onnuri'?!!row.onnuri:(!['date','scope','ledgerType'].includes(k)&&String(row[k]||'').trim()));
  if(!content)return null;
  const date=String(row.date||'').trim(),amount=numInput(row.amount),scope=String(row.scope||''),type=String(row.ledgerType||''),
   category=String(row.category||'').trim(),merchant=String(row.merchant||'').trim();
@@ -679,6 +691,7 @@ function sheetRowFromInput(row,i){
  if(!merchant)fail('거래처를 입력하세요');
  const value={id:'manual-sheet-'+uid(),date,time:'',amount,direction:'expense',scope,ledgerType:type,
   category,subcategory:String(row.subcategory||'').trim(),merchant,payment:String(row.payment||'').trim(),
+  onnuri:!!row.onnuri,onnuriAuto:!!row.onnuriAuto,onnuriManual:!!row.onnuriTouched,
   note:String(row.note||'').trim(),status:scope==='review'?'review':'confirmed',manual:true,
   source:'manual',sourceSheet:'시트형 직접 입력',bankKey:''};
  normalizeWindmoon(value);
@@ -1406,7 +1419,7 @@ function onClick(event){
    for(let i=0;i<count&&sheetData.rows.length<sheetData.limit;i++)sheetData.rows.push(sheetNewRow());render();return
  }
  if(target.id==='sheet-remove-empty'){
-   readSheetCells();sheetData.rows=sheetData.rows.filter(x=>SHEET_FIELDS.some(f=>!['date','scope','ledgerType'].includes(f)&&String(x[f]||'').trim()));
+   readSheetCells();sheetData.rows=sheetData.rows.filter(x=>SHEET_FIELDS.some(f=>f==='onnuri'?!!x.onnuri:(!['date','scope','ledgerType'].includes(f)&&String(x[f]||'').trim())));
    while(sheetData.rows.length<5)sheetData.rows.push(sheetNewRow());render();return
  }
  if(target.id==='sheet-submit'){submitSheet();return}
