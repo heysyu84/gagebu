@@ -1120,7 +1120,14 @@ const validateBankRange=range=>{
 async function processBank(file,range=bankImportRange){
  const bounds=validateBankRange(range);
  const parsed=await window.BankSaladXLSX.parseBankSalad(file);
- const existing=new Set(state.records.map(x=>x.bankKey).filter(Boolean));
+ // Re-imports must recognize previously linked split charges and explicitly
+ // excluded bank rows; otherwise duplicate expenses and payroll reappear.
+ const existing=new Set([
+   ...state.records.flatMap(x=>[
+     x.bankKey,...(Array.isArray(x.extraBankKeys)?x.extraBankKeys:[])
+   ]),
+   ...(Array.isArray(state.excludedAudit)?state.excludedAudit.map(x=>x.bankKey):[])
+ ].filter(Boolean));
  const source=state.records.filter(x=>x.source!=='bank'&&x.direction==='expense');
  const used=new Set(),counts={},all=[],links=[];
  const duplicates=new Map();let reviewCount=0,outOfRange=0;
