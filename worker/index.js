@@ -46,7 +46,7 @@ const failRate=async(req,env)=>{
 export default {
   async fetch(req,env){
     const url=new URL(req.url),path=url.pathname,origin=req.headers.get('origin')||'';
-    const allowed=new Set(String(env.ALLOWED_ORIGINS||'https://heysyu84.github.io').split(',').map(s=>s.trim()).filter(Boolean));
+    const allowed=new Set(String(env.ALLOWED_ORIGINS||'https://my-gagebu.pages.dev,https://heysyu84.github.io').split(',').map(s=>s.trim()).filter(Boolean));
     if(origin&&!allowed.has(origin))return text(403,'Origin not allowed',null);
     if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, PUT, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Max-Age':'600','Vary':'Origin'}});
     if(path==='/health'&&req.method==='GET')return reply(200,{ok:true,service:'store-ledger-api'},origin);
