@@ -327,31 +327,47 @@ function pasteSheetGrid(e){
  rerenderSheet(startIndex,el.dataset.sheetField);
 }
 function sheetMove(e){
- const el=e.target.closest?.('[data-sheet-field]');if(!el||e.isComposing||e.keyCode===229)return false;
+ // Handle keys before the browser moves focus. Korean IME confirmation must be ignored.
+ if(page!=='sheet'||e.isComposing||e.keyCode===229||e.ctrlKey||e.metaKey||e.altKey)return false;
+ const el=e.target.closest?.('[data-sheet-field]');
+ if(!el||el.disabled||el.readOnly)return false;
  const key=e.key;
  if(!['Enter','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key))return false;
- if(key.startsWith('Arrow')&&!['SELECT'].includes(el.tagName)){
-   if((key==='ArrowLeft'&&el.selectionStart>0)||(key==='ArrowRight'&&el.selectionStart<el.value.length))return false;
+ const index=Number(el.dataset.sheetIndex),column=SHEET_FIELDS.indexOf(el.dataset.sheetField);
+ if(column<0||!Number.isInteger(index)||index<0)return false;
+ // For native text fields, allow caret movement until the beginning/end of the text.
+ if((key==='ArrowLeft'||key==='ArrowRight')&&el.tagName!=='SELECT'){
+   const start=el.selectionStart,end=el.selectionEnd,length=String(el.value||'').length;
+   if(start!==null&&end!==null){
+     if(start!==end)return false; // selection still needs normal keyboard handling
+     if(key==='ArrowLeft'&&start>0)return false;
+     if(key==='ArrowRight'&&end<length)return false;
+   }
  }
- // Native selects keep Up/Down for changing choices; Enter/Tab advance cells.
- if(el.tagName==='SELECT'&&key.startsWith('Arrow'))return false;
- const i=Number(el.dataset.sheetIndex),col=SHEET_FIELDS.indexOf(el.dataset.sheetField);
- let nextRow=i,nextCol=col;
- if(key==='Enter'||key==='ArrowDown')nextRow++;
- else if(key==='ArrowUp')nextRow--;
- else if(key==='Tab')nextCol+=e.shiftKey?-1:1;
- else if(key==='ArrowLeft')nextCol--;
- else if(key==='ArrowRight')nextCol++;
- if(nextCol>=SHEET_FIELDS.length){nextCol=0;nextRow++}
- if(nextCol<0){nextCol=SHEET_FIELDS.length-1;nextRow--}
- if(nextRow<0)return false;
+ // Alt+Down opens a native dropdown; arrows without modifiers move between cells.
+ let row=index,col=column;
+ if(key==='Enter')row+=e.shiftKey?-1:1;
+ else if(key==='ArrowDown')row++;
+ else if(key==='ArrowUp')row--;
+ else if(key==='ArrowRight')col++;
+ else if(key==='ArrowLeft')col--;
+ else if(key==='Tab')col+=e.shiftKey?-1:1;
+ if(col>=SHEET_FIELDS.length){row++;col=0}
+ if(col<0){row--;col=SHEET_FIELDS.length-1}
+ if(row<0)return false;
  e.preventDefault();
- readSheetCells();
- if(nextRow>=sheetData.limit)return true;
- if(nextRow>=sheetData.rows.length){
-   sheetData.rows.push(sheetNewRow());rerenderSheet(nextRow,SHEET_FIELDS[nextCol]);return true;
+ e.stopPropagation();
+ const current=sheetData.rows[index];
+ if(current)current[el.dataset.sheetField]=el.value; // do not discard last edited cell
+ if(row>=sheetData.limit){toast('한 번에 최대 '+sheetData.limit+'행까지 입력할 수 있습니다.');return true}
+ while(row>=sheetData.rows.length){
+   const newRow=sheetNewRow();
+   sheetData.rows.push(newRow);
+   const body=$('#sheet-entry-table tbody');
+   if(body)body.insertAdjacentHTML('beforeend',sheetRowMarkup(newRow,sheetData.rows.length-1));
  }
- const next=$('[data-sheet-index="'+nextRow+'"][data-sheet-field="'+SHEET_FIELDS[nextCol]+'"]');next?.focus();next?.select?.();
+ const next=$('[data-sheet-index="'+row+'"][data-sheet-field="'+SHEET_FIELDS[col]+'"]');
+ if(next){next.focus({preventScroll:false});if(next.tagName==='INPUT'&&next.type!=='date')next.select?.()}
  return true;
 }
 function sheetSelectChange(el){
@@ -979,7 +995,7 @@ function init(){
      const mapping={'1':'personal','2':'business','3':'windmoon'};
      if(id&&mapping[e.key]){e.preventDefault();chooseScope(id,mapping[e.key])}
    }
- });
+ }, true);
  const drop=$('#content');
  document.addEventListener('dragover',e=>{if(page==='import'&&e.dataTransfer?.types.includes('Files'))e.preventDefault()});
  document.addEventListener('drop',e=>{if(page!=='import'||!e.dataTransfer?.files?.length)return;e.preventDefault();onBankFile(e.dataTransfer.files[0])});
