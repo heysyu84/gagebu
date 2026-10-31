@@ -29,3 +29,7 @@ GitHub 저장소 Settings → Pages → Build and deployment → **Deploy from a
 → Branch: `main`, Folder: `/ (root)` → Save
 
 게시 주소: https://heysyu84.github.io/store-ledger/
+
+## 2026-10-31 최신 시트 갱신
+
+`데이터 관리`에서 최신 구글 시트 이관 JSON을 **최신 시트 갱신** 모드로 가져오면 원본 시트 거래를 갱신하고 사이트에 직접 입력한 거래는 보존합니다. 기존 시트 거래를 사이트에서 수동 편집했다면 먼저 전체 JSON을 백업하세요. 공개 GitHub 저장소에는 실거래 기록이나 메모가 올라가지 않습니다. 같은 상호의 앞으로의 구매는 자동으로 재분류하지 않습니다.
