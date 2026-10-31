@@ -1,0 +1,65 @@
+name: Deploy private ledger API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-ledger-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      LEDGER_ADMIN_PASSWORD: ${{ secrets.STORE_LEDGER_ADMIN_PASSWORD }}
+      LEDGER_SESSION_PEPPER: ${{ secrets.STORE_LEDGER_SESSION_PEPPER }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check required private settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" || -z "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "::error::Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN under repository Actions secrets."
+            exit 1
+          fi
+          if [[ ${#LEDGER_ADMIN_PASSWORD} -lt 16 || ${#LEDGER_SESSION_PEPPER} -lt 32 ]]; then
+            echo "::error::Set STORE_LEDGER_ADMIN_PASSWORD (16+ characters) and STORE_LEDGER_SESSION_PEPPER (32+ characters)."
+            exit 1
+          fi
+      - name: Create or reuse dedicated Cloudflare D1
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 list --json > "$RUNNER_TEMP/ledger-d1-list.json"
+          if ! node scripts/configure-cloudflare.mjs "$RUNNER_TEMP/ledger-d1-list.json"; then
+            echo "Creating dedicated store-ledger-private database..."
+            npx --yes wrangler@4 d1 create store-ledger-private --location apac
+            npx --yes wrangler@4 d1 list --json > "$RUNNER_TEMP/ledger-d1-list.json"
+            node scripts/configure-cloudflare.mjs "$RUNNER_TEMP/ledger-d1-list.json"
+          fi
+      - name: Create schema if missing (never erase data)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute store-ledger-private --remote --file=db/schema.sql
+      - name: Deploy Cloudflare Worker with private secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_file="$RUNNER_TEMP/store-ledger-worker-secrets.json"
+          trap 'rm -f "$secret_file"' EXIT
+          node -e "const fs=require('node:fs');fs.writeFileSync(process.argv[1],JSON.stringify({ADMIN_PASSWORD:process.env.LEDGER_ADMIN_PASSWORD,SESSION_PEPPER:process.env.LEDGER_SESSION_PEPPER}),{mode:0o600})" "$secret_file"
+          npx --yes wrangler@4 deploy --secrets-file "$secret_file"
+          echo "Worker deployed. Open the GitHub Pages ledger and enter the workers.dev URL under Data Management > Server Storage."
