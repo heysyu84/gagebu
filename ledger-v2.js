@@ -7,12 +7,12 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원',ym=()=>new Date().toISOString().slice(0,7);
 const now=()=>new Date().toISOString().slice(0,10),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',review:'미분류 검토함',records:'전체 거래내역',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sales:'월매출 입력',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
 const blank=()=>({version:2,records:[],customRules:{},rentRecipients:{},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
-let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false;
+let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym();
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -87,6 +87,10 @@ function dashboard(){
  statCard('편의점 매입 · 운영',sum(business),business.length+'건 · 편의점 장부','teal','▤')+
  statCard('풍월관 관련',sum(windmoon),windmoon.length+'건 · 별도 관리','violet','◈')+
  statCard('미분류 대기',sum(review),review.length+'건 · 판단 전 합계에서 분리','amber','?')+'</div>'+
+ '<section class="surface sales-overview"><div class="surface-head"><div><h2>POS 월매출 요약</h2><p>편의점 매출·토토 월 확정 수수료는 직접 입력한 기록만 집계합니다.</p></div><button class="btn subtle" data-nav="sales">월매출 입력 →</button></div>'+
+ '<div class="sales-overview-grid"><div><span>편의점 매출</span><strong>'+won(revenueTotal('store'))+'</strong></div>'+
+ '<div><span>토토 월 확정 수수료</span><strong>'+won(revenueTotal('lotto'))+'</strong></div>'+
+ '<div><span>매출 합계</span><strong>'+won(revenueTotal('store')+revenueTotal('lotto'))+'</strong></div></div></section>'+
  '<div class="dash-columns"><section class="surface"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>분류 완료한 거래 기준, 풍월관 금액은 별도 항목으로 표시</p></div></div>'+
  (categories.length?'<div class="category-chart">'+categories.map(([name,value])=>'<div class="chart-line"><div class="chart-meta"><span>'+E(name)+'</span><strong>'+won(value)+'</strong></div><div class="chart-bar"><i style="width:'+Math.max(2,value/max*100).toFixed(2)+'%"></i></div></div>').join('')+'</div>':'<div class="empty">금융내역을 가져오면 항목별 지출이 표시됩니다.</div>')+'</section>'+
  '<section class="surface summary-panel"><div class="surface-head"><div><h2>장부 구분</h2><p>고정지출 = 원본 시트 분류 · 고정비와 다름</p></div></div>'+
@@ -173,6 +177,90 @@ function rulesPage(){
  '<section class="surface"><div class="surface-head"><div><h2>직접 확정한 거래처 규칙</h2><p>온라인 쇼핑몰은 같은 가맹점의 결제 목적이 매번 달라 자동 규칙 저장 대상이 아닙니다.</p></div></div>'+
  (Object.keys(state.customRules).length?'<div class="saved-rules">'+Object.entries(state.customRules).map(([key,value])=>'<div class="rule-saved"><span>'+E(key)+'</span><strong>'+E(LABEL[value.scope]||'')+'</strong><button class="row-edit" data-remove-rule="'+E(key)+'">삭제</button></div>').join('')+'</div>':'<div class="empty">직접 등록한 거래처별 규칙이 없습니다.</div>')+'</section>';
 }
+
+/* Monthly revenue is entered manually, separately from BankSalad expense imports.
+   An existing v1 income transaction for that month is updated, not duplicated. */
+const SALES={
+ store:{category:'가게 매출',label:'편의점 월매출'},
+ lotto:{category:'토토 수수료',label:'토토 월매출 · 확정 수수료'}
+};
+const monthEnd=month=>month+'-'+String(new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()).padStart(2,'0');
+const isMonth=month=>/^\d{4}-(?:0[1-9]|1[0-2])$/.test(String(month||''));
+function findSales(month,type){
+ const cat=SALES[type]?.category;
+ return cat?state.records.filter(x=>x.direction==='income'&&x.category===cat&&x.date.slice(0,7)===month&&x.status!=='excluded'):[];
+}
+function salesValue(month,type){
+ const entries=findSales(month,type);
+ return {amount:sum(entries),count:entries.length,record:entries.length===1?entries[0]:null};
+}
+function revenueTotal(type,selected=period){
+ return sum(state.records.filter(x=>x.direction==='income'&&x.category===SALES[type].category&&x.status!=='excluded'&&(selected==='all'||x.date.slice(0,7)===selected)));
+}
+function upsertSale(month,type,amount,note){
+ if(!isMonth(month)||!SALES[type]||!Number.isSafeInteger(amount)||amount<0)throw Error('월·금액을 확인하세요.');
+ const existing=findSales(month,type);
+ if(existing.length>1)throw Error('같은 달에 같은 매출 기록이 여러 건 있습니다. 자동 덮어쓰지 않았습니다.');
+ if(existing.length){
+   const record=existing[0];
+   Object.assign(record,{amount,note,scope:'business',status:'confirmed',manual:true});
+   return 'updated';
+ }
+ state.records.push({id:'manual-monthly-'+type+'-'+month,date:monthEnd(month),time:'',amount,
+   direction:'income',scope:'business',ledgerType:'',category:SALES[type].category,subcategory:'',
+   merchant:type==='store'?'편의점 POS 월마감':'토토 POS 월마감',payment:'',
+   note,source:'manual',sourceSheet:'사이트 월 마감',status:'confirmed',manual:true,bankKey:''});
+ return 'created';
+}
+function salesPage(){
+ const m=isMonth(salesMonth)?salesMonth:ym();
+ const monthData={store:salesValue(m,'store'),lotto:salesValue(m,'lotto')};
+ const year=m.slice(0,4),months=Array.from({length:12},(_,i)=>year+'-'+String(i+1).padStart(2,'0'));
+ const forms=Object.entries(SALES).map(([type,cfg])=>{
+   const x=monthData[type];
+   return '<form class="sales-form" data-sale-type="'+type+'">'+
+   '<div class="sales-form-head"><div class="sales-type-icon '+type+'">'+(type==='store'?'▣':'◎')+'</div><div><h2>'+E(cfg.label)+'</h2>'+
+   '<p>'+(type==='store'?'편의점 POS에서 확인한 해당 월의 총매출을 직접 입력합니다.':'토토 POS의 월 확정 수수료를 입력합니다. 당첨금 송금·판매액 전체를 매출로 합산하지 않습니다.')+'</p></div></div>'+
+   '<div class="sales-current"><span>현재 등록 금액</span><strong>'+ (x.count?won(x.amount):'미등록')+'</strong></div>'+
+   (x.count>1?'<div class="sales-conflict">이 달에 '+x.count+'개의 같은 매출 기록이 있어 중복을 확인해야 합니다. 자동 수정은 중지됩니다.</div>':'')+
+   '<label class="sales-input-label" for="sales-amount-'+type+'">월 확정 금액 (원)</label>'+
+   '<input type="text" inputmode="numeric" autocomplete="off" id="sales-amount-'+type+'" name="amount" placeholder="예: 12,500,000" value="'+(x.count===1?E(String(x.amount.toLocaleString('ko-KR'))):'')+'" required>'+
+   '<label class="sales-input-label" for="sales-note-'+type+'">정산 메모 (선택)</label>'+
+   '<input type="text" id="sales-note-'+type+'" name="note" value="'+E(x.record?.note||'')+'" placeholder="월마감 정산 내역">'+
+   '<button type="submit" class="btn primary wide" '+(x.count>1?'disabled':'')+'>'+(x.count===1?'✓ 월매출 수정 저장':'＋ 월매출 등록')+' <span>→</span></button>'+
+   '</form>';
+ }).join('');
+ const rows=months.map(month=>{
+   const a=salesValue(month,'store'),b=salesValue(month,'lotto');
+   return '<tr><td><b>'+month+'</b></td><td class="right">'+(a.count?won(a.amount):'—')+'</td>'+
+    '<td class="right">'+(b.count?won(b.amount):'—')+'</td>'+
+    '<td class="right">'+(a.count||b.count?won(a.amount+b.amount):'—')+'</td>'+
+    '<td><button type="button" class="row-edit" data-sales-select="'+month+'">수정</button></td></tr>';
+ }).join('');
+ return pageIntro('MONTHLY SALES','월매출 직접 입력','기존에 사용하던 편의점 매출·토토 월 확정 수수료 입력을 복구했습니다. 뱅크샐러드에서는 지출만 가져오므로 월매출은 POS 기준으로 직접 입력합니다.',
+ '<label class="sales-month-control">정산 월 <input id="sales-month" type="month" value="'+E(m)+'"></label>')+
+ '<div class="sales-metrics"><div><span>편의점 월매출</span><strong>'+won(monthData.store.amount)+'</strong></div>'+
+ '<div><span>토토 월 확정 수수료</span><strong>'+won(monthData.lotto.amount)+'</strong></div>'+
+ '<div><span>월 수입 합계</span><strong>'+won(monthData.store.amount+monthData.lotto.amount)+'</strong></div></div>'+
+ '<div class="sales-forms">'+forms+'</div>'+
+ '<section class="surface"><div class="surface-head"><div><h2>'+year+'년 월별 매출 내역</h2>'+
+ '<p>기존 구글 시트/가게부 V1에서 이관한 월매출도 표시됩니다. 같은 달 수정 시 기존 기록을 갱신합니다.</p></div></div>'+
+ '<div class="table-scroll"><table class="records-table sales-history"><thead><tr><th>월</th><th class="right">편의점 매출</th><th class="right">토토 수수료</th><th class="right">매출 합계</th><th>입력</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>'+
+ '<div class="notice"><b>중복 계산 방지</b><p>은행 계좌에 들어온 입금은 뱅크샐러드에서 가져오지 않습니다. 이 화면의 매출은 직접 입력한 월 확정 기록만 집계합니다. 토토 당첨금 송금 등은 계속 제외됩니다.</p></div>';
+}
+function saveMonthlySale(form){
+ const type=form.dataset.saleType,amountRaw=String(new FormData(form).get('amount')||'').replace(/[,\s]/g,''),note=String(new FormData(form).get('note')||'').trim();
+ if(!/^\d+$/.test(amountRaw)){toast('금액은 0 이상의 숫자로 입력하세요.');return}
+ const amount=Number(amountRaw);
+ if(!Number.isSafeInteger(amount)){toast('금액이 너무 큽니다.');return}
+ const old=JSON.stringify(state.records);
+ try{
+   const mode=upsertSale(salesMonth,type,amount,note);
+   if(!save()){state.records=JSON.parse(old);return}
+   render();toast(SALES[type].label+' '+(mode==='updated'?'수정':'등록')+' 완료: '+won(amount));
+ }catch(err){state.records=JSON.parse(old);toast(err.message)}
+}
+
 function settingsPage(){
  return pageIntro('DATA & PRIVACY','데이터 · 설정','서버 이전 전까지 현재 자료는 이 브라우저에만 저장됩니다. 기존 v1 장부를 삭제하거나 덮어쓰지 않습니다.')+
  '<section class="settings-grid"><div class="surface settings-box"><div class="surface-head"><div><h2>데이터 백업</h2><p>금융 정보와 거래처가 포함된 개인 파일입니다.</p></div></div>'+
@@ -187,7 +275,7 @@ function render(){
  $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.status==='review'&&x.direction==='expense').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
- container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sales:salesPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
  $('#sidebar').classList.remove('open');
  setStatus('이 브라우저에 저장됨');
 }
@@ -423,6 +511,7 @@ function onClick(event){
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
+ if(target.dataset.salesSelect){salesMonth=target.dataset.salesSelect;render();return}
  if(target.id==='new-record'){editRecord();return}
  if(target.id==='commit-bank'){commitBank();return}
  if(target.id==='discard-import'){preview=null;render();return}
@@ -445,6 +534,7 @@ function onClick(event){
 }
 function onChange(e){
  const el=e.target;
+ if(el.id==='sales-month'){if(isMonth(el.value)){salesMonth=el.value;render()}return}
  if(el.id==='bank-file'){onBankFile(el.files?.[0]);el.value='';return}
  if(el.id==='legacy-file'){importLegacy(el.files?.[0]);el.value='';return}
  if(el.id==='period-filter'){period=el.value;offset=0;reviewOffset=0;render();return}
@@ -459,6 +549,7 @@ function init(){
  document.addEventListener('change',onChange);
  document.addEventListener('input',e=>{if(e.target.id==='query-filter')onChange(e)});
  $('#editor-form').addEventListener('submit',e=>{e.preventDefault();submitEditor(e.target)});
+ document.addEventListener('submit',e=>{if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}});
  document.addEventListener('keydown',e=>{
    if(e.key==='Escape'){$('#sidebar').classList.remove('open')}
    if(page==='review'&&!$('#editor').open&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')){

@@ -19,3 +19,33 @@
 /* Guide source-ledger upload before importing bank transactions on first setup. */
 .import-grid>.upload-panel:first-child{order:2}
 .import-grid>.upload-panel:nth-child(2){order:1}
+
+/* Monthly POS revenue input — separated from BankSalad expenditure */
+.sales-month-control{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:750;color:#607b76;white-space:nowrap}
+.sales-month-control input{min-height:41px;border:1px solid #d9e7e2;border-radius:9px;background:white;padding:9px 12px;color:var(--ink);font-size:13px}
+.sales-metrics,.sales-overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.sales-metrics>div,.sales-overview-grid>div{background:#fff;border:1px solid var(--edge);border-radius:12px;padding:18px 21px;min-width:0}
+.sales-metrics span,.sales-overview-grid span{font-size:11px;color:#77908b;font-weight:690;display:block;margin-bottom:8px}
+.sales-metrics strong,.sales-overview-grid strong{font-size:22px;letter-spacing:-.6px;white-space:nowrap;color:#173c38}
+.sales-forms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}
+.sales-form{background:white;border:1px solid var(--edge);box-shadow:var(--shadow);border-radius:14px;padding:25px;display:flex;flex-direction:column}
+.sales-form-head{display:flex;gap:13px;align-items:flex-start;min-height:89px}
+.sales-type-icon{width:43px;height:43px;border-radius:12px;background:#e5f4ec;color:#13816b;display:grid;place-items:center;font-size:22px;flex:none}
+.sales-type-icon.lotto{background:#eeeefa;color:#7567aa}
+.sales-form-head h2{margin:3px 0 5px;font-size:16px}
+.sales-form-head p{font-size:11px;margin:0;color:#889c98;max-width:520px}
+.sales-current{border-radius:9px;background:#f6faf8;display:flex;align-items:center;justify-content:space-between;padding:14px 17px;gap:10px;margin:0 0 19px}
+.sales-current span{font-size:11px;color:#8ba098}
+.sales-current strong{font-size:15px;color:#174f43}
+.sales-input-label{font-size:12px;color:#59746d;font-weight:720;margin:0 0 7px}
+.sales-form input{width:100%;border:1px solid #dbe7e0;background:#fff;border-radius:9px;min-height:44px;margin-bottom:17px;padding:10px 12px;font-size:14px;color:#27473d}
+.sales-form input:focus{border-color:#5ab499}
+.sales-form .btn{margin-top:auto}
+.sales-conflict{background:#fff5e4;border:1px solid #f4dba7;border-radius:8px;font-size:11px;padding:11px;margin-bottom:12px;color:#a57627}
+.sales-history td,.sales-history th{white-space:nowrap}
+.sales-overview .surface-head{padding-bottom:7px}
+.sales-overview-grid{padding:0 25px 22px;gap:11px;margin-bottom:0}
+.sales-overview-grid>div{background:#f7faf8;padding:14px 18px}
+.sales-overview-grid strong{font-size:20px}
+@media(max-width:760px){.sales-forms{grid-template-columns:1fr}.sales-metrics,.sales-overview-grid{gap:8px}.sales-metrics>div,.sales-overview-grid>div{padding:13px}.sales-metrics strong,.sales-overview-grid strong{font-size:16px}.sales-overview-grid{padding:0 14px 18px}}
+@media(max-width:440px){.sales-metrics{grid-template-columns:1fr}.sales-metrics>div{display:flex;align-items:center;justify-content:space-between;gap:10px}.sales-metrics span{margin:0}.sales-metrics strong{font-size:17px}.sales-form{padding:17px}}
