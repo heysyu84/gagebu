@@ -16,7 +16,7 @@ function ledger(data=empty()){
   document:{querySelector:()=>ui,querySelectorAll:()=>[]},confirm:()=>true,setTimeout,clearTimeout});
  context.window=context;
  for(const script of ['ledger-validation.js','ledger-rules-v2.js'])vm.runInContext(file(script),context);
- const expose=`render=()=>{};toast=()=>{};globalThis.ledgerTest={get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},setRefund:id=>activeRefund=id,setView:options=>{page=options.page||'records';period=options.period||'all';scopeFilter=options.scope||'all';typeFilter=options.type||'all';paymentFilter=options.payment||'all';q=options.query||'';recordsMode=options.mode||'active'},planSafeLedgerMerge,netExpenseAmount,financials,refundEntries,ledgerEntries,filtered,recordsPage,dashboard,transactionTable,transactionCSV,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save};`;
+ const expose=`render=()=>{};toast=()=>{};globalThis.ledgerTest={get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},setRefund:id=>activeRefund=id,setView:options=>{page=options.page||'records';period=options.period||'all';scopeFilter=options.scope||'all';typeFilter=options.type||'all';paymentFilter=options.payment||'all';q=options.query||'';recordsMode=options.mode||'active'},classificationChanges,canUndoClassification,undoClassification,changesPage,chooseScope,planSafeLedgerMerge,netExpenseAmount,financials,refundEntries,ledgerEntries,filtered,recordsPage,dashboard,transactionTable,transactionCSV,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save};`;
  const source=file('ledger-v2.js');assert(source.endsWith('init();\n})();\n'));
  vm.runInContext(source.replace(/init\(\);\n\}\)\(\);\n$/,expose+'\n})();\n'),context);
  const api=context.ledgerTest;api.set(data);
@@ -108,4 +108,34 @@ test('local storage failure and invalid changes roll back to the last saved ledg
  assert.equal(f.save(),false);assert.equal(f.get().records[0].amount,10000);
  const g=ledger({...empty(),records:[purchase()]});g.get().records[0].amount=-1;
  assert.equal(g.save(),false);assert.equal(g.get().records[0].amount,10000);
+});
+
+test('classification edits retain old values and undo only their changed fields',()=>{
+ const initial={...empty(),records:[{...purchase(),scope:'review',status:'review',category:'기타',manual:false},purchase('other')]};
+ const f=ledger(initial);f.chooseScope('p','personal');
+ const entry=f.get().classificationHistory[0];assert(entry);assert.equal(entry.before.scope,'review');assert.equal(entry.after.scope,'personal');
+ assert.equal(entry.before.manual,false);assert.equal(entry.after.manual,true);assert(f.canUndoClassification(entry));
+ f.get().records[0].amount=17000;f.get().records[0].note='분류 후 추가한 메모';f.save();
+ assert(f.undoClassification(entry,false));
+ const row=f.get().records[0];assert.equal(row.scope,'review');assert.equal(row.status,'review');assert.equal(row.manual,false);
+ assert.equal(row.amount,17000);assert.equal(row.note,'분류 후 추가한 메모');assert.equal(f.get().records[1].scope,'personal');
+ assert.equal(f.get().classificationHistory.length,2);assert(f.get().classificationHistory[1].undoneAt);
+ assert.match(f.changesPage(),/되돌림 완료/);
+});
+test('history comparison ignores newly imported transactions and preserves stale newer edits',()=>{
+ const before={...empty(),records:[purchase()]},after=structuredClone(before);after.records[0].scope='business';after.records.push(purchase('new'));
+ const f=ledger(after),[entry]=f.classificationChanges(before,after,{prefix:'server-v3',source:'서버 버전 2 → 3'});
+ assert.equal(f.classificationChanges(before,after).length,1);assert(f.canUndoClassification(entry));
+ f.get().records[0].scope='windmoon';assert(!f.canUndoClassification(entry));assert.equal(f.undoClassification(entry,false),false);
+ assert.equal(f.get().records[0].scope,'windmoon');
+});
+test('failed classification writes roll back the record and its journal together',()=>{
+ const f=ledger({...empty(),records:[purchase()]});f.fail();f.chooseScope('p','business');
+ assert.equal(f.get().records[0].scope,'personal');assert.equal(f.get().classificationHistory,undefined);
+});
+test('classification history is bounded and normal amount edits do not add entries',()=>{
+ const f=ledger({...empty(),records:[purchase()]});
+ for(let i=0;i<104;i++)f.chooseScope('p',i%2?'personal':'business');
+ assert.equal(f.get().classificationHistory.length,100);
+ f.get().records[0].amount=22222;f.save();assert.equal(f.get().classificationHistory.length,100);
 });

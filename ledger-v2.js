@@ -7,7 +7,7 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원';
 const now=()=>GagebuValidation.koreaDate(),ym=()=>now().slice(0,7),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'여러 건 입력',categories:'분류 관리',sales:'매출 관리',lotto:'매출 관리',review:'가져오기 · 분류',import:'가져오기 · 분류',rules:'분류 관리',settings:'저장 · 백업'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'여러 건 입력',categories:'분류 관리',sales:'매출 관리',lotto:'매출 관리',review:'가져오기 · 분류',import:'가져오기 · 분류',rules:'분류 관리',settings:'저장 · 백업',changes:'최근 변경 · 되돌리기'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
@@ -50,6 +50,37 @@ const blank=()=>({version:2,records:[],refunds:[],dailyLotto:[],storeProfits:{},
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 let sync=null,persistedState=null,storageFailure='',corruptStorage=false,serverBusy=false;
 let recordsMode='active',activeRefund='',queryTimer=null;
+let serverHistory=[],serverHistoryEntries=[],historyCursor=0,historyOlder=null,historyBusy=false,historyMessage='';
+const CLASS_FIELDS=['scope','ledgerType','category','subcategory','status'];
+const CLASS_META=['manual','confidence','reason','ruleId','detailSubcategory','scopeBeforeExclusion'];
+const owns=(row,key)=>Object.prototype.hasOwnProperty.call(row,key);
+const sameField=(a,b,key)=>owns(a,key)===owns(b,key)&&a[key]===b[key];
+function classificationChanges(before,after,{at=new Date().toISOString(),prefix='change',source='local'}={}){
+ const old=new Map((before.records||[]).map(row=>[row.id,row])),changes=[];
+ for(const row of after.records||[]){
+  const previous=old.get(row.id);
+  if(!previous||!CLASS_FIELDS.some(key=>!sameField(previous,row,key)))continue;
+  const scalar=value=>value===null||value===undefined||['string','number','boolean'].includes(typeof value);
+  const fields=[...CLASS_FIELDS,...CLASS_META].filter(key=>scalar(previous[key])&&scalar(row[key])&&!sameField(previous,row,key)),a={},b={};
+  for(const key of fields){if(owns(previous,key))a[key]=previous[key];if(owns(row,key))b[key]=row[key]}
+  changes.push({id:prefix+':'+row.id,recordId:row.id,date:row.date,merchant:row.merchant||'',amount:row.amount,at,source,fields,before:a,after:b});
+ }
+ return changes;
+}
+function canUndoClassification(entry){
+ const row=state.records.find(x=>x.id===entry.recordId);
+ return !!row&&!entry.undoneAt&&entry.fields.every(key=>sameField(row,entry.after,key));
+}
+function undoClassification(entry,ask=true){
+ if(!canUndoClassification(entry)){toast('이 거래는 이후에 다시 변경됐습니다. 최신 변경부터 확인하세요.');return false}
+ if(ask&&!confirm(entry.date+' · '+entry.merchant+' · '+won(entry.amount)+'\n이 거래의 분류를 변경 전으로 되돌릴까요?'))return false;
+ const row=state.records.find(x=>x.id===entry.recordId);
+ for(const key of entry.fields){if(owns(entry.before,key))row[key]=entry.before[key];else delete row[key]}
+ const saved=(state.classificationHistory||[]).find(x=>x.id===entry.id);if(saved)saved.undoneAt=new Date().toISOString();
+ if(!save()){render();return false}
+ if(!saved)entry.undoneAt=new Date().toISOString();
+ render();toast('해당 거래의 분류를 변경 전으로 되돌렸습니다.');return true;
+}
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -137,6 +168,10 @@ function save(){
  }
  try{
   if(corruptStorage)throw Error('저장 자료를 읽지 못했습니다. 데이터 · 설정에서 원본을 백업하세요.');
+  if(persistedState){
+   const changes=classificationChanges(JSON.parse(persistedState),state,{prefix:uid()});
+   if(changes.length)state.classificationHistory=[...changes.reverse(),...(state.classificationHistory||[])].slice(0,100);
+  }
   const raw=JSON.stringify(state);localStorage.setItem(KEY,raw);persistedState=raw;storageFailure='';
   if(sync)sync.localChanged();else setStatus('이 브라우저에 저장됨');return true;
  }catch(err){
@@ -1381,6 +1416,48 @@ function confirmLotto(){
    render();toast(month+' 토토 월 수수료 확정: '+won(total));
  }catch(err){state.records=JSON.parse(before);toast(err.message)}
 }
+function classificationHistoryCards(entries){
+ if(!entries.length)return '<p class="history-empty">아직 표시할 분류 변경이 없습니다.</p>';
+ const names={scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',status:'상태'};
+ const value=(key,val)=>key==='scope'?(LABEL[val]||val||'없음'):key==='ledgerType'?(GROUP[val]||val||'없음'):key==='status'?({confirmed:'분류 완료',review:'미분류',excluded:'제외'}[val]||val||'없음'):(val||'없음');
+ return '<div class="classification-history">'+entries.map(entry=>{
+  const able=canUndoClassification(entry),stamp=new Date(entry.at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'});
+  return '<article class="history-entry"><div class="history-entry-head"><div><b>'+E(entry.date)+' · '+E(entry.merchant)+'</b><span>'+E(won(entry.amount))+'</span></div><button class="btn'+(able?' primary':' subtle')+'" data-undo-classification="'+E(entry.id)+'"'+(able?'':' disabled')+'>'+(entry.undoneAt?'되돌림 완료':able?'이 변경 되돌리기':'현재 값이 달라짐')+'</button></div>'+
+   '<dl class="history-diff">'+entry.fields.filter(key=>CLASS_FIELDS.includes(key)).map(key=>'<div><dt>'+E(names[key])+'</dt><dd><span>'+E(value(key,entry.before[key]))+'</span><span aria-label="변경 후">→</span><strong>'+E(value(key,entry.after[key]))+'</strong></dd></div>').join('')+'</dl>'+
+   '<p class="history-time">'+E(entry.source==='local'?'변경 시간':entry.source)+' · '+E(stamp)+'</p></article>';
+ }).join('')+'</div>';
+}
+function changesPage(){
+ const recorded=state.classificationHistory||[];
+ return pageIntro('RECENT CHANGES','최근 변경 · 되돌리기','어떤 거래를 잘못 눌렀는지 몰라도 변경 전·후 분류를 확인하고 해당 거래만 되돌릴 수 있습니다.')+
+ '<section class="surface settings-box"><div class="surface-head"><div><h2>최근 분류 변경</h2><p>최근 100건을 보관합니다. 되돌린 내용도 변경 이력에 남습니다.</p></div></div>'+classificationHistoryCards(recorded)+
+ (!recorded.length?'<p class="server-help">기능 추가 전에 바뀐 거래는 아래의 서버 저장 이력에서 찾아보세요.</p>':'')+'</section>'+
+ '<section class="surface settings-box history-server"><div class="surface-head"><div><h2>이전 서버 저장본 비교</h2><p>남아 있는 최근 저장본 10개를 최신순으로 비교합니다. 장부 전체를 교체하지 않습니다.</p></div><button class="btn" id="load-classification-history"'+(historyBusy?' disabled':'')+'>'+(historyBusy?'비교 중…':serverHistory.length?'최신 저장 이력 새로고침':'서버 저장 이력 불러오기')+'</button></div>'+
+ (historyMessage?'<p class="notice compact" role="status">'+E(historyMessage)+'</p>':'')+classificationHistoryCards(serverHistoryEntries)+
+ (serverHistory.length>historyCursor?'<button class="btn" id="older-classification-history"'+(historyBusy?' disabled':'')+'>더 이전 변경 불러오기</button>':'')+'</section>';
+}
+async function loadClassificationHistory(older=false){
+ if(historyBusy)return;
+ if(!sync?.token){toast('서버 저장 이력은 저장 · 백업에서 로그인한 뒤 확인할 수 있습니다.');navigate('settings');return}
+ historyBusy=true;historyMessage='서버 저장본을 읽어 분류 변경을 비교하고 있습니다.';render();
+ try{
+  if(!older){
+   const versions=await sync.listHistory();
+   serverHistory=versions;serverHistoryEntries=[];historyCursor=0;historyOlder=null;
+   if(!versions.length){historyMessage='서버에 비교할 저장본이 없습니다.';return}
+   const saved=await Promise.all(versions.slice(0,2).map(x=>sync.readVersion(x.version)));
+   const latest=saved[0];historyOlder=saved.at(-1);historyCursor=saved.length;
+   serverHistoryEntries.push(...classificationChanges(latest.data,state,{prefix:'local-v'+latest.version,source:'현재 기기와 서버 최신 버전 '+latest.version+' 비교'}));
+   if(saved.length===2)serverHistoryEntries.push(...classificationChanges(saved[1].data,latest.data,{prefix:'server-v'+latest.version,at:latest.updatedAt,source:'서버 버전 '+saved[1].version+' → '+latest.version}));
+  }else if(serverHistory[historyCursor]&&historyOlder){
+   const previous=await sync.readVersion(serverHistory[historyCursor].version),latest=historyOlder;
+   serverHistoryEntries.push(...classificationChanges(previous.data,latest.data,{prefix:'server-v'+latest.version,at:latest.updatedAt,source:'서버 버전 '+previous.version+' → '+latest.version}));
+   historyOlder=previous;historyCursor++;
+  }
+  historyMessage=serverHistoryEntries.length?'분류가 바뀐 거래 '+serverHistoryEntries.length+'건을 찾았습니다. 변경 전·후를 확인한 뒤 해당 건만 되돌리세요.':'지금까지 비교한 저장본에는 분류 변경이 없습니다.';
+ }catch(error){historyMessage=error.status===404?'서버 저장 이력을 아직 불러올 수 없습니다. 잠시 후 다시 시도하세요.':error.message;if(error.status===401)sync.error(error)}
+ finally{historyBusy=false;render()}
+}
 function settingsPage(){
  return pageIntro('DATA & STORAGE','저장 · 백업','저장 상태를 확인하고 전체 장부를 백업할 수 있습니다.')+
  serverSettings()+
@@ -1429,7 +1506,7 @@ function render(){
  $('#page-title').textContent=VIEWS[page]||'가계부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===mainPage));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)).length+(state.refunds||[]).filter(x=>x.status==='review').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
- container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,categories:categoriesPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,categories:categoriesPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage,changes:changesPage})[page]();
  const tabs=mainPage==='sales'?[['sales','월매출'],['lotto','토토 일별 매출']]:mainPage==='import'?[['import','파일 가져오기'],['review','미분류 검토']]:mainPage==='categories'?[['categories','분류 · 결제수단'],['rules','자동 분류 기준']]:null;
  if(tabs){const head=$('.page-head',container);head?.insertAdjacentHTML('afterend','<nav class="workspace-tabs" aria-label="'+E(VIEWS[page])+' 세부 메뉴">'+tabs.map(([route,label])=>'<button data-nav="'+route+'" class="'+(route===page?'selected':'')+'" aria-current="'+(route===page?'page':'false')+'">'+label+'</button>').join('')+'</nav>')}
 
@@ -2061,6 +2138,11 @@ function submitEditor(f){
 }
 function onClick(event){
  const target=event.target.closest('button,a,[data-nav]');if(!target)return;
+ if(target.dataset.undoClassification){
+  const entry=[...(state.classificationHistory||[]),...serverHistoryEntries].find(x=>x.id===target.dataset.undoClassification);if(entry)undoClassification(entry);return;
+ }
+ if(target.id==='load-classification-history'){void loadClassificationHistory();return}
+ if(target.id==='older-classification-history'){void loadClassificationHistory(true);return}
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
  if(['top-new-record','mobile-new-record','dashboard-new-record'].includes(target.id)){editRecord();return}
  if(['server-retry','server-pull','server-push','server-logout'].includes(target.id)){void serverAction(target.id.slice(7));return}
@@ -2256,7 +2338,7 @@ function init(){
  document.addEventListener('keydown',e=>{
    if(sheetMove(e))return;
    if(e.key==='Escape'){$('#sidebar').classList.remove('open');$('#mobile-menu').setAttribute('aria-expanded','false')}
-   if(page==='review'&&!$('#editor').open&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')){
+   if(page==='review'&&!$('#editor').open&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!/INPUT|TEXTAREA|SELECT|BUTTON|A/.test(document.activeElement?.tagName||'')){
      const row=$('.review-card');const id=row?.dataset.reviewId;
      const mapping={'1':'personal','2':'business','3':'windmoon'};
      if(id&&mapping[e.key]){e.preventDefault();chooseScope(id,mapping[e.key])}

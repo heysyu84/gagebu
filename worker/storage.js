@@ -1,6 +1,18 @@
 /* Each immutable revision is chunked below D1's single-value size limit.
  * The CAS and all revision writes run in one D1 batch transaction. */
 const KEY='main-v2',CHUNK_CHARS=64000,MAX_HISTORY=10;
+export async function listDocumentHistory(db){
+ const rows=await db.prepare('SELECT version,updated_at FROM ledger_document_history WHERE ledger_key=? ORDER BY version DESC LIMIT 10').bind(KEY).all();
+ return rows.results.map(row=>({version:row.version,updatedAt:row.updated_at}));
+}
+export async function readDocumentVersion(db,version){
+ if(!Number.isSafeInteger(version)||version<1)return null;
+ const row=await db.prepare('SELECT version,revision,chunk_count,updated_at FROM ledger_document_history WHERE ledger_key=? AND version=?').bind(KEY,version).first();
+ if(!row)return null;
+ const rows=await db.prepare('SELECT part,content FROM ledger_document_chunks WHERE ledger_key=? AND revision=? ORDER BY part').bind(KEY,row.revision).all();
+ if(rows.results.length!==row.chunk_count)return null;
+ return {version:row.version,updatedAt:row.updated_at,data:JSON.parse(rows.results.map(x=>x.content).join(''))};
+}
 export async function readDocument(db){
  // Retry if a concurrent writer pruned the revision between the two reads.
  for(let attempt=0;attempt<2;attempt++){

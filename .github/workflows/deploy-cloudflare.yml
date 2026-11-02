@@ -2,6 +2,13 @@ name: Deploy private ledger API
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'ledger-validation.js'
+      - 'db/schema.sql'
+      - '.github/workflows/deploy-cloudflare.yml'
 
 permissions:
   contents: read
@@ -26,6 +33,8 @@ jobs:
         uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
+      - name: Validate ledger and storage
+        run: npm test
       - name: Check required private settings
         shell: bash
         run: |

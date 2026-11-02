@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import worker from '../worker/index.js';
-import {writeDocument,readDocument} from '../worker/storage.js';
+import {writeDocument,readDocument,listDocumentHistory,readDocumentVersion} from '../worker/storage.js';
 import '../ledger-validation.js';
 
 const blank=()=>({version:2,records:[],refunds:[],dailyLotto:[],storeProfits:{}});
@@ -67,4 +67,23 @@ test('API login, V2 write/read, CAS conflict, logout and origin protection',asyn
 });
 test('health does not report success when storage/auth is missing',async()=>{
  assert.equal((await worker.fetch(request('/health'),{})).status,503);
+});
+
+test('retained versions are readable without rewriting the active document',async()=>{
+ const db=new D1();for(let i=0;i<12;i++)await writeDocument(db,i,{...blank(),records:[{...record(),amount:i}]});
+ const history=await listDocumentHistory(db);assert.equal(history.length,10);assert.equal(history[0].version,12);
+ assert.equal(await readDocumentVersion(db,2),null);assert.equal(await readDocumentVersion(db,-1),null);
+ const previous=await readDocumentVersion(db,11);assert.equal(previous.data.records[0].amount,10);
+ assert.equal((await readDocument(db)).version,12);assert.equal((await readDocument(db)).data.records[0].amount,11);
+});
+test('history endpoints require the existing session and never change saved data',async()=>{
+ const env={DB:new D1(),ADMIN_PASSWORD:'testpass',SESSION_PEPPER:'test-pepper-123456789123456789123456789'};
+ assert.equal((await worker.fetch(request('/api/v2/history'),env)).status,401);
+ assert.equal((await worker.fetch(request('/api/v2/history/1'),env)).status,401);
+ await writeDocument(env.DB,0,{...blank(),records:[record()]});
+ const {token}=await(await worker.fetch(request('/api/login','POST',{password:env.ADMIN_PASSWORD}),env)).json();
+ const history=await(await worker.fetch(request('/api/v2/history','GET',null,token),env)).json();assert.equal(history.versions[0].version,1);
+ const previous=await(await worker.fetch(request('/api/v2/history/1','GET',null,token),env)).json();assert.equal(previous.data.records[0].amount,12500);
+ assert.equal((await worker.fetch(request('/api/v2/history/999','GET',null,token),env)).status,404);
+ assert.equal((await readDocument(env.DB)).version,1);
 });

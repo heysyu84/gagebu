@@ -63,6 +63,17 @@ class LedgerSync{
   if(!Number.isSafeInteger(remote.version)||remote.version<0||(remote.data!==null&&!root.GagebuValidation.validV2(remote.data)))throw Error('서버 장부 형식을 확인하세요.');
   this.remote=remote;return remote;
  }
+ async listHistory(){
+  const result=await this.request('/api/v2/history');
+  if(!Array.isArray(result.versions)||result.versions.length>10||!result.versions.every(x=>Number.isSafeInteger(x.version)&&x.version>0&&typeof x.updatedAt==='string'))throw Error('서버 저장 이력 형식을 확인하세요.');
+  return result.versions.sort((a,b)=>b.version-a.version);
+ }
+ async readVersion(version){
+  if(!Number.isSafeInteger(version)||version<1)throw Error('저장 버전을 확인하세요.');
+  const result=await this.request('/api/v2/history/'+version);
+  if(result.version!==version||!root.GagebuValidation.validV2(result.data))throw Error('이전 저장본 형식을 확인하세요.');
+  return result;
+ }
  async adopt(remote){
   if(!remote.data)throw Error('서버에 저장된 장부가 없습니다.');
   if(!this.options.applyRemote(remote.data))throw Error('브라우저에 저장할 공간이 부족합니다. 기존 자료를 유지했습니다.');

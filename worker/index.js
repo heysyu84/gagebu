@@ -4,7 +4,7 @@
  * ADMIN_PASSWORD and SESSION_PEPPER must be set with `wrangler secret put`.
  */
 import '../ledger-validation.js';
-import {readDocument,writeDocument} from './storage.js';
+import {readDocument,writeDocument,listDocumentHistory,readDocumentVersion} from './storage.js';
 const SESSION_SECONDS=12*60*60;
 const MAX_BODY_BYTES=4*1024*1024;
 const text = (status,message,origin,extras={})=>reply(status,{error:message},origin,extras);
@@ -78,6 +78,11 @@ export default {
         return reply(200,{ok:true},origin);
       }
       if(path==='/api/v2/state'&&req.method==='GET')return reply(200,await readDocument(env.DB),origin);
+      if(path==='/api/v2/history'&&req.method==='GET')return reply(200,{versions:await listDocumentHistory(env.DB)},origin);
+      if(/^\/api\/v2\/history\/\d+$/.test(path)&&req.method==='GET'){
+        const saved=await readDocumentVersion(env.DB,Number(path.split('/').pop()));
+        return saved?reply(200,saved,origin):text(404,'Saved version no longer available',origin);
+      }
       if(path==='/api/v2/state'&&req.method==='PUT'){
         const body=await readJson(req);
         if(!Number.isSafeInteger(body.version)||body.version<0||!GagebuValidation.validV2(body.data))return text(400,'Invalid V2 state payload',origin);

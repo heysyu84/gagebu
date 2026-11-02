@@ -9,7 +9,7 @@
   <title>가계부 | Money Desk</title>
   <meta name="description" content="개인 · 편의점 · 풍월관의 수입과 지출을 정리하는 가계부.">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./style-v2.css?v=20261103-refund-date-1">
+  <link rel="stylesheet" href="./style-v2.css?v=20261103-classification-undo-1">
 </head>
 <body>
 <a class="skip-link" href="#content">본문으로 바로가기</a>
@@ -30,6 +30,7 @@
     <div class="sidebar-section nav-gap">SETTINGS</div>
     <nav class="nav-stack">
       <button class="nav-link" data-nav="categories"><span class="nav-icon">▤</span> 분류 관리</button>
+      <button class="nav-link" data-nav="changes"><span class="nav-icon">↶</span> 최근 변경 · 되돌리기</button>
       <button class="nav-link" data-nav="settings"><span class="nav-icon">⚙</span> 저장 · 백업</button>
     </nav>
     <div class="sidebar-foot"><b>PRIVATE WORKSPACE</b><p>은행 엑셀은 외부로 전송하지 않고 이 브라우저에서만 분석합니다.</p></div>
@@ -37,7 +38,7 @@
   <div class="main">
     <header class="topbar">
       <div class="top-left"><button id="mobile-menu" class="menu-toggle" aria-label="메뉴 열기" aria-controls="sidebar" aria-expanded="false">☰</button><div class="crumb"><span>GAGEBU</span><span class="sep">/</span><strong id="page-title">전체 요약</strong></div></div>
-      <div class="top-right"><button class="top-privacy" data-nav="settings" title="저장 상태와 서버 연결 확인"><span class="privacy-icon">●</span><span id="save-indicator" role="status">저장 상태 확인 중</span></button><button class="btn primary" id="top-new-record">＋ 거래 입력</button></div>
+      <div class="top-right"><button class="top-privacy" data-nav="settings" title="저장 상태와 서버 연결 확인"><span class="privacy-icon">●</span><span id="save-indicator" role="status">저장 상태 확인 중</span></button><button class="btn subtle" data-nav="changes" title="최근 분류 변경 확인 및 실행 취소">↶ 되돌리기</button><button class="btn primary" id="top-new-record">＋ 거래 입력</button></div>
     </header>
     <main class="content" id="content" tabindex="-1"></main>
   </div>
@@ -79,8 +80,8 @@
 <script src="./bank-xlsx-v2.js?v=20261101-suppliers-v11" defer></script>
 <script src="./ledger-rules-v2.js?v=20261101-uplus-history-v15" defer></script>
 <script src="./server-config.js?v=20261102-renewal-2" defer></script>
-<script src="./ledger-validation.js?v=20261102-renewal-2" defer></script>
-<script src="./ledger-sync.js?v=20261102-renewal-2" defer></script>
-<script src="./ledger-v2.js?v=20261103-refund-date-1" defer></script>
+<script src="./ledger-validation.js?v=20261103-classification-undo-1" defer></script>
+<script src="./ledger-sync.js?v=20261103-classification-undo-1" defer></script>
+<script src="./ledger-v2.js?v=20261103-classification-undo-1" defer></script>
 </body>
 </html>
