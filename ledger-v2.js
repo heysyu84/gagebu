@@ -318,7 +318,7 @@ function dashboard(){
  const business=confirmed.filter(x=>x.scope==='business'),windmoon=confirmed.filter(x=>x.scope==='windmoon');
  const other=confirmed.filter(x=>!['personal','business','windmoon'].includes(x.scope));
  const storeIncome=revenueTotal('store',period),lottoIncome=revenueTotal('lotto',period);
- const paymentMap=new Map(),categoryMap=new Map(),merchantMap=new Map();
+ const paymentMap=new Map(),fixedCategoryMap=new Map(),consumptionCategoryMap=new Map(),merchantMap=new Map();
  const addGroup=(map,key,amount,label)=>{
    const entry=map.get(key)||{name:label||key,amount:0,count:0};
    entry.amount+=amount;entry.count++;map.set(key,entry);
@@ -331,11 +331,12 @@ function dashboard(){
    payment=paymentLabelKey(payment);
    if(!payment||isPaymentMonthMarker(payment))payment='결제수단 미기재';
    addGroup(paymentMap,payment,amount);
-   addGroup(categoryMap,String(x.category||'미분류'),amount);
+   if(x.ledgerType==='fixed')addGroup(fixedCategoryMap,String(x.category||'미분류'),amount);
+   else if(x.ledgerType==='consumption')addGroup(consumptionCategoryMap,String(x.category||'미분류'),amount);
    const merchantKey=G.normalizeMerchant(x.merchant||'')||'거래처미기재';
    addGroup(merchantMap,merchantKey,amount,String(x.merchant||'거래처 미기재').trim()||'거래처 미기재');
  }
- const payments=[...paymentMap.values()],categories=[...categoryMap.values()],merchants=[...merchantMap.values()];
+ const payments=[...paymentMap.values()],fixedCategories=[...fixedCategoryMap.values()],consumptionCategories=[...consumptionCategoryMap.values()],merchants=[...merchantMap.values()];
  const onnuri=confirmed.filter(isOnnuri),onnuriAmount=sum(onnuri);
  const fixedAmount=sum(confirmed.filter(x=>x.ledgerType==='fixed'));
  const consumptionAmount=sum(confirmed.filter(x=>x.ledgerType==='consumption'));
@@ -416,8 +417,10 @@ function dashboard(){
  (payments.length>8?'<button type="button" class="md-expand-payments" data-dashboard-expand-payments="1">'+
     (dashboardPayAll?'상위 8개만 보기':'전체 '+payments.length+'개 결제수단 보기')+'</button>':'')+
  '<div class="md-panel-footer">선택 기간 '+payments.length+'종 · 총 '+won(total)+' · '+confirmed.length+'건</div></section>'+
- '<section class="surface md-panel"><div class="surface-head"><div><h2>지출 항목 TOP 9</h2><p>대분류별 지출 금액 · 건수</p></div></div>'+dashRankList(categories,9)+
- '<div class="md-panel-footer">고정지출 '+dashWonShort(fixedAmount)+' · 소비지출 '+dashWonShort(consumptionAmount)+'</div></section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>고정지출 TOP 9</h2><p>대분류별 고정지출 금액 · 건수</p></div></div>'+dashRankList(fixedCategories,9)+
+ '<div class="md-panel-footer">고정지출 합계 '+won(fixedAmount)+'</div></section>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>소비지출 TOP 9</h2><p>대분류별 소비지출 금액 · 건수</p></div></div>'+dashRankList(consumptionCategories,9)+
+ '<div class="md-panel-footer">소비지출 합계 '+won(consumptionAmount)+'</div></section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>많이 결제한 거래처</h2><p>같은 이름의 거래처를 합산한 상위 8곳</p></div></div>'+dashRankList(merchants,8)+'</section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>매출 · 입력 점검</h2><p>'+(posMonth?E(posMonth)+' 기준':'등록된 월매출이 없습니다.')+'</p></div>'+
  '<button type="button" class="btn subtle" data-nav="sales">매출 입력</button></div>'+
