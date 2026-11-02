@@ -11,12 +11,13 @@ const nodes=(node,tag)=>Array.from(node.getElementsByTagName(tag));
 const colNumber=addr=>{let a=0;for(const ch of (addr.match(/^[A-Z]+/)||[''])[0])a=a*26+ch.charCodeAt(0)-64;return a-1};
 function excelDate(value){
  if(typeof value==='number'||(/^\d{5}(?:\.\d+)?$/.test(String(value)))) {
-   const d=new Date(Date.UTC(1899,11,30)+Math.round(Number(value))*86400000);
+   const d=new Date(Date.UTC(1899,11,30)+Math.floor(Number(value))*86400000);
    return d.toISOString().slice(0,10);
  }
  const s=String(value||'').trim().replace(/[./]/g,'-');
  const match=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
- return match?match[1]+'-'+match[2].padStart(2,'0')+'-'+match[3].padStart(2,'0'):'';
+ const date=match?match[1]+'-'+match[2].padStart(2,'0')+'-'+match[3].padStart(2,'0'):'';
+ return global.GagebuValidation?.date(date)?date:'';
 }
 function timeStr(v){
  if(!v)return '';

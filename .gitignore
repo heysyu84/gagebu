@@ -10,3 +10,5 @@ node_modules/
 *개인용*.html
 *가계부 2026*.xlsx
 *private*seed*.sql
+dist/
+.openai/

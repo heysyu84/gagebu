@@ -4,10 +4,10 @@
 const KEY='gagebu-v2-private',OLD='gagebu-v1-data';
 const $=(q,root=document)=>root.querySelector(q),$$=(q,root=document)=>Array.from(root.querySelectorAll(q));
 const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원',ym=()=>new Date().toISOString().slice(0,7);
-const now=()=>new Date().toISOString().slice(0,10),uid=()=>crypto.randomUUID();
+const n=s=>Number(s)||0,won=v=>Math.round(n(v)).toLocaleString('ko-KR')+'원';
+const now=()=>GagebuValidation.koreaDate(),ym=()=>now().slice(0,7),uid=()=>crypto.randomUUID();
 const G=window.GagebuRules;
-const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'시트형 입력',categories:'분류 관리',sales:'월매출 입력',lotto:'토토 일별 매출',review:'미분류 검토함',import:'거래 가져오기',rules:'분류 기준',settings:'데이터 · 설정'};
+const VIEWS={dashboard:'전체 요약',records:'전체 거래내역',sheet:'여러 건 입력',categories:'분류 관리',sales:'매출 관리',lotto:'매출 관리',review:'가져오기 · 분류',import:'가져오기 · 분류',rules:'분류 관리',settings:'저장 · 백업'};
 const LABEL={personal:'개인',business:'편의점',windmoon:'풍월관',review:'미분류',excluded:'제외',transfer:'이체'};
 const GROUP={fixed:'고정지출',consumption:'소비지출'};
 const SOURCE={bank:'뱅크샐러드',legacy:'구글 시트',manual:'직접 입력'};
@@ -48,6 +48,8 @@ function syncEditorOnnuriDefault(){
 }
 const blank=()=>({version:2,records:[],refunds:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
 let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
+let sync=null,persistedState=null,storageFailure='',corruptStorage=false,serverBusy=false;
+let recordsMode='active',activeRefund='',queryTimer=null;
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
 const escAttr=E;
@@ -76,7 +78,7 @@ const ledgerScope=x=>{
  return 'personal';
 };
 function migrateLegacy(data){
- if(!data||!Array.isArray(data.transactions))throw Error('가게부 원본 형식이 아닙니다.');
+ if(!data||!Array.isArray(data.transactions))throw Error('가계부 원본 형식이 아닙니다.');
  const entries=data.transactions.map(x=>({
   id:'old-'+String(x.id),date:String(x.date||''),time:'',amount:money(x.amount),
   direction:x.kind==='income'?'income':x.kind==='transfer'?'transfer':'expense',
@@ -86,7 +88,7 @@ function migrateLegacy(data){
   source:'legacy',sourceSheet:String(x.sourceSheet||'직접 입력'),sourceId:String(x.id),sourceRow:x.sourceRow??null,
   originalArea:String(x.area||''),status:ledgerScope(x)==='review'?'review':'confirmed',manual:false,bankKey:''
  }));
- return entries.filter(x=>x.date.startsWith('2026-')).map(x=>{normalizeWindmoon(x);Object.assign(x,canonicalCategory(x.ledgerType,x.category,x.subcategory));return x});
+ return entries.filter(x=>GagebuValidation.date(x.date)&&x.date>='2026-01-01').map(x=>{normalizeWindmoon(x);Object.assign(x,canonicalCategory(x.ledgerType,x.category,x.subcategory));return x});
 }
 
 const numInput=raw=>{
@@ -96,7 +98,7 @@ const numInput=raw=>{
 const signedInput=raw=>{const s=String(raw??'').replace(/[,\s₩원]/g,'');return /^-?\d+$/.test(s)?Number(s):NaN;};
 const normalizeDailyLotto=x=>{
  const date=String(x?.date||'');
- if(!/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00Z')))return null;
+ if(!GagebuValidation.date(date))return null;
  const commission=Number(x.commission),handle=Number(x.handle);
  if(!Number.isSafeInteger(commission)||commission<0||!Number.isSafeInteger(handle)||handle<0)return null;
  return {id:String(x.id||'lotto-'+date),date,commission,handle,
@@ -128,18 +130,33 @@ function mergeStoreProfits(profits){
  return changed;
 }
 function save(){
- try{localStorage.setItem(KEY,JSON.stringify(state));setStatus('이 브라우저에 저장됨');return true}
- catch(err){toast('브라우저 저장 공간 부족: 백업 후 데이터를 확인해 주세요.');return false}
+ if(!GagebuValidation.validV2(state)){
+  if(persistedState)state=JSON.parse(persistedState);
+  toast('변경 내용의 날짜·금액·백업 형식이 올바르지 않아 저장하지 않았습니다. 기존 장부는 유지됩니다.');
+  return false;
+ }
+ try{
+  if(corruptStorage)throw Error('저장 자료를 읽지 못했습니다. 데이터 · 설정에서 원본을 백업하세요.');
+  const raw=JSON.stringify(state);localStorage.setItem(KEY,raw);persistedState=raw;storageFailure='';
+  if(sync)sync.localChanged();else setStatus('이 브라우저에 저장됨');return true;
+ }catch(err){
+  if(persistedState)state=JSON.parse(persistedState);
+  storageFailure=corruptStorage?'저장 자료 오류 · 원본 보존 중':'저장 실패 · 공간·권한 확인';
+  setStatus(storageFailure,'error');toast(corruptStorage?err.message:'저장하지 못했습니다. 저장 공간·브라우저 권한을 확인하고 JSON 백업을 보관하세요.');return false;
+ }
 }
 function load(){
  let hadV2=false;
  try{
    const existing=JSON.parse(localStorage.getItem(KEY)||'null');
+   if(existing!==null&&(!existing||existing.version!==2||!Array.isArray(existing.records)))throw Error('Invalid saved ledger');
    if(existing&&existing.version===2&&Array.isArray(existing.records)){
      state={...blank(),...existing};
      if(!Array.isArray(state.dailyLotto))state.dailyLotto=[];
      if(!Array.isArray(state.refunds))state.refunds=[];
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
+     if(!GagebuValidation.validV2(state))throw Error('Invalid saved ledger');
+     persistedState=JSON.stringify(state);
      taxonomy();
      if(!Object.prototype.hasOwnProperty.call(existing,'bankSaladBaselineVersion'))state.bankSaladBaselineVersion=0;
      const bankMigrated=adoptBankSaladDefaults();
@@ -151,7 +168,7 @@ function load(){
      }
      hadV2=true;
    }
- }catch(err){console.warn('V2 load failed',err)}
+ }catch(err){corruptStorage=true;storageFailure='저장 자료 오류 · 원본 보존 중';console.warn('V2 load failed');return}
  try{
    const legacy=JSON.parse(localStorage.getItem(OLD)||'null');
    if(legacy&&Array.isArray(legacy.transactions)){
@@ -178,7 +195,7 @@ const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction===
 const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(paymentFilter==='all'||effectivePaymentMethod(x)===paymentFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.bankPayment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
 const monthlyOptions=()=>{
  const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.refunds||[]).map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
- for(let m=1;m<=12;m++)months.add('2026-'+String(m).padStart(2,'0'));
+ for(let m=1;m<=12;m++)months.add(now().slice(0,4)+'-'+String(m).padStart(2,'0'));
  return ['<option value="all">전체 기간</option>',...[...months].sort().reverse().map(m=>'<option value="'+m+'"'+(m===period?' selected':'')+'>'+m.slice(0,4)+'년 '+Number(m.slice(5))+'월</option>')].join('');
 };
 const statusBadge=x=>x.status==='review'?'<span class="tag tag-warn">분류 대기</span>':x.status==='excluded'?'<span class="tag tag-muted">제외됨</span>':'<span class="tag tag-ok">분류 완료</span>';
@@ -190,7 +207,10 @@ const refundedAmount=row=>linkedRefunds(row).reduce((v,r)=>v+n(r.amount),0);
 const netExpenseAmount=row=>n(row.amount)-refundedAmount(row);
 const sum=list=>list.reduce((v,x)=>v+(x.direction==='expense'?netExpenseAmount(x):n(x.amount)),0);
 const reviewableExpense=x=>x.status==='review'&&!(refundedAmount(x)===n(x.amount)&&n(x.amount)>0);
-function setStatus(msg){const el=$('#save-indicator');if(el)el.textContent=msg}
+function setStatus(msg,kind='local'){
+ const el=$('#save-indicator');if(el){el.textContent=msg;el.closest('.top-privacy')?.setAttribute('data-status',kind)}
+}
+function refreshSaveStatus(){setStatus(storageFailure||sync?.status.label||'이 브라우저에 저장됨',storageFailure?'error':sync?.status.kind||'local')}
 function toast(text){
  const el=$('#toast');if(!el)return;el.textContent=text;el.classList.add('visible');
  clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),3100);
@@ -234,6 +254,9 @@ function dashRankList(entries,limit=8,metric='amount'){
  }).join('')+'</div>':'<div class="empty">해당 기간에 확인된 지출이 없습니다.</div>';
 }
 function dashboard(){
+ if(GagebuValidation.empty(state))return pageIntro('MONEY DESK','가계부','개인 · 편의점 · 풍월관의 돈 흐름을 한곳에서 관리하세요.')+
+ '<section class="surface welcome"><span class="welcome-mark">₩</span><h2>오늘의 거래부터 가볍게 시작하세요</h2><p>날짜 · 금액 · 거래처만 입력하면 저장됩니다.<br>기존 장부가 있다면 JSON 백업이나 은행 엑셀을 가져오세요.</p><div class="quick-actions"><button class="btn primary" id="dashboard-new-record">＋ 첫 거래 입력</button><button class="btn" data-nav="import">기존 자료 가져오기</button></div></section>'+
+ '<div class="start-guide"><article><b>01 · 입력</b><p>한 건은 간편 입력, 여러 건은 표에 붙여넣기</p><button class="row-edit" data-nav="sheet">여러 건 입력 →</button></article><article><b>02 · 관리</b><p>개인·편의점·풍월관을 나누고 환불까지 대조</p><button class="row-edit" data-nav="records">거래내역 →</button></article><article><b>03 · 보관</b><p>이 기기에 자동 보관하고 서버 연결 후 기기 간 동기화</p><button class="row-edit" data-nav="settings">저장 상태 확인 →</button></article></div>';
  const all=relevant().filter(x=>period==='all'||x.date.slice(0,7)===period);
  const confirmed=all.filter(x=>x.status==='confirmed'&&x.scope!=='review'&&x.scope!=='excluded');
  const pending=all.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
@@ -310,21 +333,21 @@ function dashboard(){
  const profit=posMonth?storedProfit(posMonth):null;
  const lottoDaily=posMonth?monthlyLottoDays(posMonth):[];
  const pendingShare=all.length?pending.length/all.length*100:0;
- const largest=confirmed.reduce((best,x)=>!best||n(x.amount)>n(best.amount)?x:best,null);
+ const largest=confirmed.reduce((best,x)=>!best||netExpenseAmount(x)>netExpenseAmount(best)?x:best,null);
  const paymentButtons='<div class="md-segment">'+
    ['amount','count'].map(mode=>'<button type="button" data-dashboard-pay="'+mode+'" aria-pressed="'+(dashboardPayMetric===mode)+'" class="'+(dashboardPayMetric===mode?'active':'')+'">'+(mode==='amount'?'금액':'건수')+'</button>').join('')+'</div>';
  const paymentRank=dashRankList(payments,dashboardPayAll?1000:8,dashboardPayMetric);
- const head=pageIntro('MONEY CONTROL BOARD','가게부 상황판',
-   '수입·지출 흐름부터 결제수단, 사용처, 거래처까지 한눈에 파악합니다. 집계는 저장된 기록을 실시간 분석하며 원장을 변경하지 않습니다.',
+ const head=pageIntro('MONEY DESK','가계부',
+   '개인 · 편의점 · 풍월관의 수입과 지출을 한눈에 확인하세요.',
    '<div class="md-period-control"><label for="period-filter">조회 기간</label><select id="period-filter">'+monthlyOptions()+'</select></div>');
- return head+
+ return head+'<div class="quick-actions"><button class="btn primary" id="dashboard-new-record">＋ 거래 입력</button><button class="btn" data-nav="sheet">여러 건 한 번에 입력</button><button class="btn" data-nav="import">파일 가져오기</button></div>'+
  '<div class="md-status-strip"><span>확정 지출 <b>'+confirmed.length.toLocaleString('ko-KR')+'건</b></span>'+
  '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+ '<span>카드 환불 <b>'+(state.refunds||[]).filter(x=>x.status==='matched'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b> 연결 · 확인 필요 <b>'+(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b></span>'+
  '<span>기간 <b>'+(period==='all'?'전체 기간':E(period))+'</b></span>'+
  '<button type="button" data-nav="review">미분류 검토 →</button></div>'+
- '<div class="md-kpi-grid">'+statCard('확정 수입',fin.income,'편의점 '+dashWonShort(storeIncome)+' · 토토 '+dashWonShort(lottoIncome),'teal','↗')+
+ '<div class="md-kpi-grid primary-kpis">'+statCard('확정 수입',fin.income,'편의점 '+dashWonShort(storeIncome)+' · 토토 '+dashWonShort(lottoIncome),'teal','↗')+
  statCard('확정 지출',total,confirmed.length.toLocaleString('ko-KR')+'건 · 1건 평균 '+dashWonShort(confirmed.length?total/confirmed.length:0),'blue','↘')+
- statCard('장부상 수지',fin.balance,'확정 수입 − 확정 지출 · 순이익 아님',fin.balance<0?'amber':'teal','≋')+
+ statCard('장부상 수지',fin.balance,'확정 수입 − 확정 지출 · 순이익 아님',fin.balance<0?'amber':'teal','≋')+'</div><div class="md-kpi-grid detail-kpis">'+
  statCard('개인 지출',sum(personal),personal.length.toLocaleString('ko-KR')+'건','blue','◉')+
  statCard('편의점 지출',sum(business),business.length.toLocaleString('ko-KR')+'건','teal','▤')+
  statCard('풍월관 지출',sum(windmoon),windmoon.length.toLocaleString('ko-KR')+'건','violet','◈')+
@@ -350,23 +373,23 @@ function dashboard(){
  '<div><span>편의점 월 순이익 (참고)</span><strong>'+(profit===null?'미입력':won(profit))+'</strong></div>'+
  '<div><span>토토 일별 기록</span><strong>'+lottoDaily.length+'일</strong></div>'+
  '<div><span>확정 지출 평균</span><strong>'+dashWonShort(confirmed.length?total/confirmed.length:0)+'</strong></div>'+
- '<div><span>최대 단일 지출</span><strong>'+(largest?dashWonShort(largest.amount):'—')+'</strong></div></div>'+
+ '<div><span>최대 단일 지출</span><strong>'+(largest?dashWonShort(netExpenseAmount(largest)):'—')+'</strong></div></div>'+
  (largest?'<p class="md-check-detail">최대 지출: '+E(largest.merchant||'거래처 미기재')+' · '+E(largest.date)+'</p>':'')+
  '<button type="button" class="md-review-link" data-nav="review">미분류 '+pending.length+'건 바로 확인 →</button></section></div>'+
  '<section class="surface md-panel md-recent"><div class="surface-head"><div><h2>최근 거래</h2><p>선택한 기간 내 최근 8건 · 미분류 포함</p></div><button type="button" class="btn subtle" data-nav="records">전체 거래 보기</button></div>'+transactionTable(latest,true)+'</section>'+
  '<div class="md-disclosure">장부 지표는 입력 자료 기준이며 실제 은행 잔액·세후 순이익을 뜻하지 않습니다. 은행 간 이체·카드대금·온누리 충전액은 지출에 중복 계산하지 않으며 미분류 거래는 별도 표시합니다.</div>';
 }
 function transactionTable(items,compact=false){
- return '<div class="table-scroll"><table class="records-table"><thead><tr><th>날짜 · 시간</th><th>거래처</th><th>결제 수단</th><th>분류</th><th class="right">금액</th><th>관리</th></tr></thead><tbody>'+
+ return '<div class="table-scroll"><table class="records-table expense-table'+(compact?' compact':'')+'"><thead><tr><th>날짜 · 시간</th><th>거래처</th><th>결제 수단</th><th>분류</th><th class="right">금액</th><th>관리</th></tr></thead><tbody>'+
  (items.length?items.map(x=>'<tr><td class="date-col">'+E(x.date)+'<small>'+E(x.time||'')+'</small></td>'+
  '<td class="merchant-col"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><small>'+E((x.source==='bank'?'뱅크샐러드':x.sourceSheet||SOURCE[x.source]||'직접 입력'))+'</small></td>'+
  '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
   (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
   (onnuriLinkedCard(x)?'<small>온누리 연동 카드 (사용자 확인): '+E(onnuriLinkedCard(x))+'</small>':'')+
   (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
- '<td>'+scopeBadge(x)+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
+ '<td class="classification-col">'+(x.status==='excluded'?statusBadge(x):scopeBadge(x))+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
  (x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
- '<td class="right amount-col">'+(netExpenseAmount(x)<0?'+': '−')+won(Math.abs(netExpenseAmount(x)))+(refundedAmount(x)?'<small>원결제 '+won(x.amount)+' · 환불 '+won(refundedAmount(x))+'</small>':'')+'</td><td class="row-actions"><button class="row-edit" data-edit="'+E(x.id)+'">수정</button><button class="row-delete" data-delete-record="'+E(x.id)+'">삭제</button></td></tr>').join(''):
+ '<td class="right amount-col">'+(netExpenseAmount(x)<0?'+': '−')+won(Math.abs(netExpenseAmount(x)))+(refundedAmount(x)?'<small>원결제 '+won(x.amount)+' · 환불 '+won(refundedAmount(x))+'</small>':'')+'</td><td class="row-actions">'+(x.status==='excluded'?'<button class="row-edit" data-restore-record="'+E(x.id)+'">복원</button> ':'')+'<button class="row-edit" data-edit="'+E(x.id)+'">수정</button></td></tr>').join(''):
  '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
 }
 function reviewCard(x,i){
@@ -520,7 +543,7 @@ function adoptBankSaladDefaults(){
 }
 
 function restoreBankSaladPresets(confirmAction=true){
- if(confirmAction&&!confirm('가게부용 소비 대분류 13개(식비: 외식/배달, 온라인쇼핑: 구매처별)와 뱅크샐러드 결제수단 32종을 목록에 추가할까요?\n직접 만든 분류와 기존 거래는 삭제하지 않습니다.'))return false;
+ if(confirmAction&&!confirm('가계부용 소비 대분류 13개(식비: 외식/배달, 온라인쇼핑: 구매처별)와 뱅크샐러드 결제수단 32종을 목록에 추가할까요?\n직접 만든 분류와 기존 거래는 삭제하지 않습니다.'))return false;
  const prior=JSON.stringify(state),tax=taxonomy();
  for(const [rawMajor,subs] of Object.entries(SHEET_CATS.consumption)){
    const major=canonicalCategory('consumption',rawMajor,'').category||rawMajor;
@@ -617,7 +640,7 @@ function effectivePaymentMethod(x){
 function paymentFilterChoices(){
  const counts=new Map();
  for(const x of state.records||[]){
-   if(x.direction!=='expense'||x.status==='excluded')continue;
+   if(x.direction!=='expense'||(page==='records'&&recordsMode==='excluded'?x.status!=='excluded':x.status==='excluded'))continue;
    const method=effectivePaymentMethod(x);
    counts.set(method,(counts.get(method)||0)+1);
  }
@@ -807,6 +830,12 @@ function handleTaxForm(form){
 const SHEET_FIELDS=['date','amount','scope','ledgerType','category','subcategory','merchant','payment','note','onnuri'];
 const SHEET_TITLES={date:'날짜',amount:'금액 (원)',scope:'사용처',ledgerType:'지출 종류',category:'대분류',subcategory:'소분류',merchant:'거래처',payment:'결제수단',note:'메모',onnuri:'온누리'};
 const sheetData={rows:[],date:now(),limit:200};
+function saveSheetDraft(){try{sessionStorage.setItem('gagebu-sheet-draft',JSON.stringify(sheetData))}catch{}}
+function restoreSheetDraft(){
+ try{const saved=JSON.parse(sessionStorage.getItem('gagebu-sheet-draft')||'null');
+  if(saved&&Array.isArray(saved.rows)&&saved.rows.length<=sheetData.limit){sheetData.rows=saved.rows;if(GagebuValidation.date(saved.date))sheetData.date=saved.date}
+ }catch{}
+}
 const sheetNewRow=()=>({date:sheetData.date,amount:'',scope:'personal',scopeManual:false,ledgerType:'consumption',category:'',subcategory:'',merchant:'',payment:'',note:'',onnuri:false,onnuriAuto:false,onnuriTouched:false});
 const sheetOptions=(items,current)=>items.map(([val,label])=>'<option value="'+E(val)+'"'+(val===current?' selected':'')+'>'+E(label)+'</option>').join('');
 function sheetSelectOptions(field,row){
@@ -856,6 +885,7 @@ function readSheetCells(){
    }
    return out;
  });
+ saveSheetDraft();
 }
 function syncSheetOnnuri(row,tr){
  if(!row||row.onnuriTouched)return;
@@ -877,8 +907,8 @@ function sheetRowFromInput(row,i){
  const date=String(row.date||'').trim(),amount=numInput(row.amount),scope=String(row.scope||''),type=String(row.ledgerType||''),
   category=String(row.category||'').trim(),merchant=String(row.merchant||'').trim();
  const fail=msg=>{throw Error((i+1)+'행: '+msg)};
- if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<'2026-01-01'||Number.isNaN(Date.parse(date+'T00:00:00Z')))fail('올바른 날짜를 입력하세요');
- if(!Number.isSafeInteger(amount)||amount<=0)fail('금액은 0보다 커야 합니다');
+ if(!GagebuValidation.date(date)||date<'2026-01-01')fail('올바른 날짜를 입력하세요');
+ if(!GagebuValidation.amount(amount)||amount<=0)fail('금액은 0보다 큰 원 단위 정수로 입력하세요');
  if(!(scope in LABEL)||['transfer','excluded'].includes(scope))fail('사용처를 선택하세요');
  if(!(type in GROUP))fail('지출 종류를 선택하세요');
  if(!category)fail('대분류를 선택하세요');
@@ -909,6 +939,7 @@ function submitSheet(){
  state.records.push(...candidates);
  if(!save()){state=JSON.parse(previous);return}
  sheetData.rows=Array.from({length:10},sheetNewRow);
+ saveSheetDraft();
  render();toast(candidates.length+'건을 시트에서 저장했습니다.');
 }
 function pasteSheetGrid(e){
@@ -1007,10 +1038,11 @@ function sheetSelectChange(el){
 
 function refundAuditPanel(onlyReview=false){
  const source=(state.refunds||[]).filter(r=>(!onlyReview||r.status==='review')&&
+   (onlyReview||recordsMode==='review'?r.status==='review':recordsMode==='excluded'?r.status==='excluded':r.status!=='excluded')&&
    (period==='all'||String(r.date||'').slice(0,7)===period)&&
    (paymentFilter==='all'||paymentLabelKey(r.payment)===paymentFilter)).sort((a,b)=>b.date.localeCompare(a.date));
  if(!source.length)return '';
- const matched=source.filter(r=>r.status==='matched'),unlinked=source.filter(r=>r.status!=='matched');
+ const matched=source.filter(r=>r.status==='matched'),unlinked=source.filter(r=>r.status==='review');
  const byId=new Map(state.records.map(x=>[x.id,x]));
  return '<section class="surface ledger-refund-section"><div class="surface-head"><div><h2>'+
    (onlyReview?'확인이 필요한 카드 환불':'카드 환불 · 취소 대조 내역')+'</h2>'+
@@ -1018,18 +1050,21 @@ function refundAuditPanel(onlyReview=false){
    '<div class="ledger-refund-metrics"><div><span>확인된 환불</span><strong>'+matched.length+'건 · '+won(sum(matched))+'</strong></div>'+
    '<div><span>원결제 확인 필요</span><strong>'+unlinked.length+'건 · '+won(sum(unlinked))+'</strong></div></div>'+
    '<div class="table-scroll"><table class="records-table ledger-refund-table"><thead><tr><th>환불일</th><th>거래처</th>'+
-   '<th>결제수단</th><th class="right">환불 금액</th><th>원결제 연결</th></tr></thead><tbody>'+
+   '<th>결제수단</th><th class="right">환불 금액</th><th>원결제 연결</th><th>관리</th></tr></thead><tbody>'+
    source.map(r=>{
      const original=byId.get(r.refundOf);
      return '<tr><td>'+E(r.date)+'</td><td>'+E(r.merchant||'거래처 미기재')+'</td>'+
        '<td>'+E(r.payment)+'</td><td class="right ledger-refund-positive">+'+won(r.amount)+'</td>'+
        '<td>'+(r.status==='matched'&&original?
          '<button type="button" class="row-edit" data-edit="'+E(original.id)+'">'+E(original.date)+' · 원결제 '+won(original.amount)+'</button>':
-         '<span class="tag tag-warn">대응 결제 확인 필요</span>')+'</td></tr>';
+         '<span class="tag '+(r.status==='excluded'?'tag-muted':'tag-warn')+'">'+(r.status==='excluded'?'집계 제외':'대응 결제 확인 필요')+'</span>')+'</td><td><button class="row-edit" data-manage-refund="'+E(r.id)+'">연결 관리</button></td></tr>';
    }).join('')+'</tbody></table></div></section>';
 }
 function recordsPage(){
- const entries=filtered(state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded')).sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||'')));
+ const eligible=filtered(state.records.filter(x=>x.direction==='expense'));
+ const counts={active:eligible.filter(x=>x.status!=='excluded').length,review:eligible.filter(reviewableExpense).length,excluded:eligible.filter(x=>x.status==='excluded').length};
+ const entries=eligible.filter(x=>recordsMode==='excluded'?x.status==='excluded':recordsMode==='review'?reviewableExpense(x):x.status!=='excluded').sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||'')));
+ offset=Math.min(offset,Math.max(0,Math.ceil(entries.length/80)-1)*80);
  const confirmed=entries.filter(x=>x.status==='confirmed'&&x.scope!=='review'),pending=entries.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
  const group=new Map(),merchant=new Map();
  if(paymentFilter!=='all')for(const x of entries){
@@ -1050,22 +1085,65 @@ function recordsPage(){
  })();
  return pageIntro('TRANSACTIONS','전체 거래내역','은행에서 가져온 거래와 원본 시트의 현금 지출을 함께 관리합니다. 결제수단으로 카드·현금/송금·온누리 등을 구분해 볼 수 있습니다.',
  '<button class="btn primary" id="new-record">＋ 직접 입력</button>')+
- '<section class="surface records-surface">'+topFilters()+
+ '<section class="surface records-surface">'+topFilters()+'<div class="record-modes" aria-label="거래 상태">'+[['active','전체 지출'],['review','미분류'],['excluded','제외 내역']].map(([mode,label])=>'<button class="'+(recordsMode===mode?'selected':'')+'" aria-pressed="'+(recordsMode===mode)+'" data-record-mode="'+mode+'">'+label+' <span>'+counts[mode]+'</span></button>').join('')+'</div>'+
  '<div class="table-topline"><span>조회 결과 <b>'+entries.length.toLocaleString('ko-KR')+'건</b></span>'+
  '<strong>확정 지출 '+won(sum(confirmed))+(pending.length?' · 미분류 '+won(sum(pending)):'')+'</strong></div>'+
  paymentBreakdown+transactionTable(entries.slice(offset,offset+80))+
  '<div class="pager"><button class="btn" data-page-step="-1" '+(offset===0?'disabled':'')+'>이전</button><span>'+(entries.length?offset+1:0)+'–'+Math.min(offset+80,entries.length)+' / '+entries.length+'</span><button class="btn" data-page-step="1" '+(offset+80>=entries.length?'disabled':'')+'>다음</button></div></section>'+refundAuditPanel();
 }
+function openRefund(id){
+ const row=state.refunds.find(x=>x.id===id);if(!row)return;
+ activeRefund=id;
+ $('#refund-editor-body').innerHTML='<div class="refund-summary"><div><span>'+E(row.date)+' · '+E(row.payment||'결제수단 미기재')+'</span><h3>'+E(row.merchant||'거래처 미기재')+'</h3></div><strong>+'+won(row.amount)+'</strong></div>'+
+ '<div class="refund-body"><p>환불받은 원래 결제를 선택하세요. 연결한 금액은 원결제의 지출에서 차감됩니다.</p><label class="visually-hidden" for="refund-query">원결제 검색</label><input type="search" id="refund-query" placeholder="거래처 · 날짜 · 금액으로 검색" autocomplete="off"><div id="refund-candidates"></div></div>'+
+ '<div class="refund-actions">'+(row.status==='matched'?'<button class="btn" data-refund-action="unlink">연결 해제</button>':'')+'<button class="btn" data-refund-action="'+(row.status==='excluded'?'restore':'exclude')+'">'+(row.status==='excluded'?'검토 대상으로 복원':'환불 집계 제외')+'</button><button class="btn" id="close-refund-secondary">닫기</button></div>';
+ renderRefundCandidates();$('#refund-editor').showModal();
+}
+function renderRefundCandidates(){
+ const refund=state.refunds.find(x=>x.id===activeRefund);if(!refund)return;
+ const keyword=($('#refund-query')?.value||'').trim().toLocaleLowerCase('ko');
+ const merchant=G.normalizeMerchant(refund.merchant||''),pay=paymentLabelKey(refund.payment||'');
+ const candidates=state.records.filter(x=>x.direction==='expense'&&x.status!=='excluded'&&(!keyword||[x.merchant,x.date,x.amount,x.amount.toLocaleString('ko-KR'),x.payment].join(' ').toLocaleLowerCase('ko').includes(keyword)));
+ const score=x=>(x.id===refund.refundOf?10000:0)+(merchant&&G.normalizeMerchant(x.merchant||'')===merchant?1000:0)+(pay&&paymentLabelKey(x.payment||'')===pay?100:0)+(x.amount===refund.amount?30:0)-Math.min(50,dateDiff(x.date,refund.date)/10);
+ candidates.sort((a,b)=>score(b)-score(a)||b.date.localeCompare(a.date));
+ $('#refund-candidates').innerHTML='<p class="refund-candidate-count">'+candidates.length+'건'+(candidates.length>25?' 중 가까운 거래 25건 표시 · 검색으로 좁혀보세요':'')+'</p>'+
+ (candidates.slice(0,25).map(x=>{
+  const other=linkedRefunds(x).filter(r=>r.id!==refund.id).reduce((v,r)=>v+r.amount,0),after=x.amount-other-refund.amount;
+  return '<button type="button" class="refund-candidate'+(x.id===refund.refundOf?' selected':'')+'" data-refund-target="'+E(x.id)+'"><span><b>'+E(x.merchant||'거래처 미기재')+'</b><small>'+E(x.date)+' · '+E(paymentLabel(x))+'</small></span><span><b>'+won(x.amount)+'</b><small>연결 후 '+won(after)+(x.id===refund.refundOf?' · 현재 연결':'')+'</small></span></button>';
+ }).join('')||'<div class="empty">검색한 원결제가 없습니다. 거래를 먼저 등록한 후 연결하세요.</div>');
+}
+function changeRefund(action,targetId=''){
+ const refund=state.refunds.find(x=>x.id===activeRefund);if(!refund)return;
+ if(action==='link'){
+  const purchase=state.records.find(x=>x.id===targetId&&x.direction==='expense'&&x.status!=='excluded');if(!purchase)return;
+  const other=linkedRefunds(purchase).filter(r=>r.id!==refund.id).reduce((v,r)=>v+r.amount,0);
+  if(other+refund.amount>purchase.amount&&!confirm('연결 환불 합계가 원결제보다 '+won(other+refund.amount-purchase.amount)+' 많습니다. 환율 차액 등 실제 환불액이 맞다면 계속 연결할까요?'))return;
+  Object.assign(refund,{status:'matched',refundOf:targetId,manual:true,reason:'원결제 직접 확인'});
+ }else Object.assign(refund,{status:action==='exclude'?'excluded':'review',refundOf:'',manual:true,reason:action==='exclude'?'사용자가 집계 제외':'원결제 연결 확인 필요'});
+ if(!save())return;
+ $('#refund-editor').close();render();toast(action==='link'?'환불을 원결제에 연결했습니다.':action==='exclude'?'환불을 집계에서 제외했습니다.':'환불을 검토 대상으로 옮겼습니다.');
+}
+function excludeRecord(id){
+ const row=state.records.find(x=>x.id===id);if(!row)return;
+ row.previousScope=row.scope;row.status='excluded';row.manual=true;
+ if(!save())return;
+ $('#editor').close();render();toast('집계에서 제외했습니다. 제외 내역에서 다시 복원할 수 있습니다.');
+}
+function restoreRecord(id){
+ const row=state.records.find(x=>x.id===id);if(!row)return;
+ const scope=row.scope==='excluded'?(row.previousScope||'personal'):row.scope;
+ if(patchRecord(id,{scope,status:scope==='review'?'review':'confirmed',manual:true}))toast('거래를 복원했습니다.');
+}
 function importPage(){
  return pageIntro('DATA IMPORT','금융내역 가져오기','모든 분석은 브라우저 내부에서만 실행됩니다. 민감한 금융 엑셀은 공개 GitHub나 외부 서버에 업로드하지 않습니다.')+
- '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>02</span><div><h2>뱅크샐러드 엑셀</h2><p>선택 기간 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
+ '<div class="import-grid"><section class="surface upload-panel"><div class="step"><span>01</span><div><h2>뱅크샐러드 엑셀</h2><p>선택 기간 자료 분석 · 거래처 원문 보존 · 토토/투자/수입/불필요한 이체 제외</p></div></div>'+
  '<div class="bank-range"><strong>가져올 거래 기간</strong><small>시작일과 종료일 포함 · 선택 기간의 거래만 등록</small>'+
  '<label>시작일 <input id="bank-import-from" type="date" value="'+E(bankImportRange.from)+'"></label>'+
  '<label>종료일 <input id="bank-import-to" type="date" value="'+E(bankImportRange.to)+'"></label></div>'+
  '<label class="dropzone" id="bank-drop"><input id="bank-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><span class="drop-icon">⇧</span><strong>뱅크샐러드 XLSX 선택</strong><small>엑셀 파일을 클릭하거나 여기에 끌어다 놓으세요</small></label>'+
  '<div class="import-detail"><span>기존 거래와 날짜·금액·결제수단을 대조해 중복을 줄입니다.</span><span>카드 재발급으로 사라진 거래는 기존 시트에서 보존합니다.</span></div></section>'+
- '<section class="surface upload-panel"><div class="step"><span>01</span><div><h2>JSON 안전 병합</h2><p>오래된 V2 백업이나 기존 시트 이관 JSON도 기존 장부를 덮어쓰지 않습니다. 같은 거래는 유지하고 없는 거래·날짜만 추가하며, 변경 전 복구용 JSON을 다운로드합니다.</p></div></div>'+
- '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가게부 JSON 파일 선택</strong><small>기존 구글 시트 · 데이터 백업 · 카드 환불 대조/기록 수정 패치</small></label>'+
+ '<section class="surface upload-panel"><div class="step"><span>02</span><div><h2>JSON 안전 병합</h2><p>오래된 V2 백업이나 기존 시트 이관 JSON도 기존 장부를 덮어쓰지 않습니다. 같은 거래는 유지하고 없는 거래·날짜만 추가하며, 변경 전 복구용 JSON을 다운로드합니다.</p></div></div>'+
+ '<label class="dropzone secondary-drop"><input id="legacy-file" type="file" accept=".json,application/json"><span class="drop-icon">▦</span><strong>가계부 JSON 파일 선택</strong><small>기존 구글 시트 · 데이터 백업 · 카드 환불 대조/기록 수정 패치</small></label>'+
  '<div class="notice compact"><b>기존 데이터 보존 · 전체 덮어쓰기 금지</b><p>오래된 파일을 선택해도 기존 거래, 직접 수정한 분류, 온누리 체크와 사용자 규칙은 유지됩니다. 동일 거래의 과거 분류는 자동으로 되돌리지 않습니다.</p></div></section></div>'+
  (preview?importPreview():importEmpty())+
  '<div class="notice"><b>전액을 자동으로 지출 처리하지 않습니다.</b><p>온누리상품권 충전, 카드대금 납부, 주식투자, 토토 운영대금과 고객 송금은 제외합니다. 월세·가게 임대료는 확인된 수취인·금액만 예외 처리합니다.</p></div>';
@@ -1084,7 +1162,7 @@ function rulesPage(){
  const fixed=[
  ['스포츠토토 관련','모든 입·출금 수집 제외','토토 운영대금·당첨금 송금 및 미확인 개인 송금은 지출로 계산하지 않음'],
  ['온누리 충전','선불 충전 거래 제외','실제 사용 건과 충전액을 동시에 소비로 계산하지 않음'],
- ['주식·증권·투자','전체 제외','자산 거래는 가게부 소비 지출에서 배제'],
+ ['주식·증권·투자','전체 제외','자산 거래는 가계부 소비 지출에서 배제'],
  ['집 월세','원본 장부와 수취인·날짜·금액 대조','개인 / 고정지출 / 집 → 월세'],
  ['편의점 임대료','원본 장부와 수취인·날짜·금액 대조','편의점 / 고정지출 / 가게 → 임대료'],
  ['다이소','전부 풍월관','거래처 위치 무관하게 풍월관으로 자동 분류'],
@@ -1132,7 +1210,7 @@ function revenueTotal(type,selected=period){
  return sum(state.records.filter(x=>x.direction==='income'&&x.category===SALES[type].category&&x.status!=='excluded'&&(selected==='all'||x.date.slice(0,7)===selected)));
 }
 function upsertSale(month,type,amount,note,netProfit){
- if(!isMonth(month)||!SALES[type]||!Number.isSafeInteger(amount)||amount<0)throw Error('월·금액을 확인하세요.');
+ if(!isMonth(month)||!SALES[type]||!GagebuValidation.amount(amount))throw Error('월·금액을 확인하세요.');
  const existing=findSales(month,type);
  if(existing.length>1)throw Error('같은 달에 같은 매출 기록이 여러 건 있습니다. 자동 덮어쓰지 않았습니다.');
  if(existing.length){
@@ -1196,11 +1274,11 @@ function salesPage(){
 function saveMonthlySale(form){
  const data=new FormData(form),type=form.dataset.saleType,amount=numInput(data.get('amount')),
    note=String(data.get('note')||'').trim();
- if(!Number.isSafeInteger(amount)||amount<0){toast('월 금액은 0 이상의 숫자로 입력하세요.');return}
+ if(!GagebuValidation.amount(amount)){toast('월 금액은 0 이상의 원 단위 정수로 입력하세요.');return}
  let profit;
  if(type==='store'){
    const raw=String(data.get('netProfit')??'').trim();profit=raw===''?null:signedInput(raw);
-   if(profit!==null&&!Number.isSafeInteger(profit)){toast('순이익을 올바르게 입력하세요.');return}
+   if(profit!==null&&!GagebuValidation.amount(Math.abs(profit))){toast('순이익을 올바르게 입력하세요.');return}
  }
  const before=JSON.stringify(state.records),beforeProfits=JSON.stringify(state.storeProfits);
  try{
@@ -1248,7 +1326,7 @@ function saveLottoDaily(form){
    if(!hraw&&!craw)continue;
    if(!hraw){errors.push(date+' 판매액을 입력하세요');continue}
    const handle=numInput(hraw),commission=craw===''?estimatedCommission(handle):numInput(craw);
-   if(!Number.isSafeInteger(handle)||handle<0||!Number.isSafeInteger(commission)||commission<0){errors.push(date+' 금액 형식 오류');continue}
+   if(!GagebuValidation.amount(handle)||!GagebuValidation.amount(commission)){errors.push(date+' 금액 형식 오류');continue}
    updates.push({date,handle,commission,commissionEstimated:craw===''});
  }
  if(errors.length){toast(errors.slice(0,3).join(' / '));return}
@@ -1276,32 +1354,65 @@ function confirmLotto(){
  }catch(err){state.records=JSON.parse(before);toast(err.message)}
 }
 function settingsPage(){
- return pageIntro('DATA & PRIVACY','데이터 · 설정','서버 이전 전까지 현재 자료는 이 브라우저에만 저장됩니다. 기존 v1 장부를 삭제하거나 덮어쓰지 않습니다.')+
+ return pageIntro('DATA & STORAGE','저장 · 백업','저장 상태를 확인하고 전체 장부를 백업할 수 있습니다.')+
+ serverSettings()+
  '<section class="settings-grid"><div class="surface settings-box"><div class="surface-head"><div><h2>데이터 백업</h2><p>금융 정보와 거래처가 포함된 개인 파일입니다.</p></div></div>'+
  '<button class="btn primary wide" id="export-json">JSON 전체 백업 내려받기</button><button class="btn subtle wide" id="export-csv">CSV 거래내역 내려받기</button>'+
  '<div class="notice compact"><b>보안</b><p>백업 파일은 개인 기기 또는 암호화된 저장소에 보관하세요. 공개 GitHub에 업로드하면 안 됩니다.</p></div></div>'+
- '<div class="surface settings-box"><div class="surface-head"><div><h2>연결 상태</h2><p>Cloudflare D1 서버는 아직 연결하지 않았습니다.</p></div></div>'+
- '<div class="summary-line"><span>저장 방식</span><strong>현재 브라우저</strong></div><div class="summary-line"><span>거래내역</span><strong>'+state.records.length.toLocaleString('ko-KR')+'건</strong></div><div class="summary-line"><span>금융 파일 가져오기</span><strong>'+state.imports.length+'회</strong></div><div class="summary-line"><span>기존 가게부 v1</span><strong>별도 보존</strong></div>'+
- '<a class="text-link" href="./legacy.html">이전 가게부 화면 열기 ↗</a></div></section>'+
- '<section class="surface reset-data"><div class="surface-head"><div><h2>연습용 데이터 초기화</h2><p>현재 브라우저에 저장된 V2 데이터만 삭제합니다. V1 원본은 변경하지 않습니다.</p></div></div>'+
+ '<div class="surface settings-box"><div class="surface-head"><div><h2>장부 현황</h2><p>이 기기에서 현재 열람 중인 자료입니다.</p></div></div>'+
+ '<div class="summary-line"><span>거래내역</span><strong>'+state.records.length.toLocaleString('ko-KR')+'건</strong></div><div class="summary-line"><span>토토 일별 기록</span><strong>'+state.dailyLotto.length+'일</strong></div><div class="summary-line"><span>환불 내역</span><strong>'+state.refunds.length+'건</strong></div><div class="summary-line"><span>금융 파일 가져오기</span><strong>'+state.imports.length+'회</strong></div></div></section>'+
+ '<details class="surface reset-data"><summary class="reset-summary">전체 데이터 초기화 <span>주의가 필요한 작업</span></summary><div class="surface-head"><div><h2>현재 장부 초기화</h2><p>서버 연결 중에는 서버에도 반영됩니다. 실행 전에 전체 백업을 보관하세요.</p></div></div>'+
  '<div class="reset-body"><div class="reset-counts"><span>거래 <b>'+state.records.length.toLocaleString('ko-KR')+'건</b></span>'+
  '<span>토토 일별 <b>'+(state.dailyLotto||[]).length.toLocaleString('ko-KR')+'건</b></span>'+
  '<span>편의점 순이익 <b>'+Object.keys(state.storeProfits||{}).length.toLocaleString('ko-KR')+'개월</b></span>'+
  '<span>가져오기 <b>'+state.imports.length.toLocaleString('ko-KR')+'회</b></span></div>'+
  '<p>거래·월매출·토토 일별 기록·온누리 결제 체크·직접 분류 규칙·가져오기 이력을 모두 초기화합니다. 중요한 자료는 JSON으로 먼저 백업하세요.</p>'+
- '<button type="button" class="btn danger" id="reset-all-v2">V2 전체 데이터 삭제</button></div></section>'+
- '<div class="notice"><b>서버 전환 준비</b><p>현재 버전은 로컬 데이터 모델을 독립적으로 관리합니다. 향후 Workers + D1 구축 시 저장 어댑터만 전환하도록 분리했습니다. 아직 자동 동기화가 된다고 표시하지 않습니다.</p></div>';
+ '<button type="button" class="btn danger" id="reset-all-v2">전체 데이터 초기화</button></div></details>'+
+ '<div class="notice"><b>저장 상태 확인</b><p>상단에 “서버 저장 확인됨”이 표시된 자료만 서버 저장이 완료된 상태입니다. 연결이 끊겨도 이 기기의 자료는 유지되며, 다른 기기와 충돌하면 자료 선택 전까지 자동 덮어쓰기를 멈춥니다.</p></div>';
+}
+function serverSettings(){
+ const s=sync,status=storageFailure||s?.status.label||'이 브라우저에 저장됨',busy=serverBusy?' disabled':'',connected=!!s?.token;
+ const last=s?.meta.lastSyncedAt?new Date(s.meta.lastSyncedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'아직 없음';
+ return '<section class="surface server-storage"><div class="surface-head"><div><h2>서버 저장 · 기기 간 동기화</h2><p>로그인 후 변경 내용을 자동 저장합니다. 비밀번호는 저장하지 않습니다.</p></div><span class="tag '+(s?.status.kind==='saved'?'tag-ok':'tag-warn')+'">'+E(status)+'</span></div>'+
+ '<div class="server-storage-body">'+(corruptStorage?'<div class="notice storage-alert"><b>저장된 원본을 읽지 못했습니다.</b><p>자동 저장을 중지하고 원본을 보존했습니다. 아래에서 원본을 내려받은 뒤 서버 자료를 불러올 수 있습니다.</p><button class="btn" id="backup-unreadable">읽지 못한 원본 내려받기</button></div>':'')+
+ '<form id="server-login-form" class="server-connect"><label>개인 API 주소<input name="apiBase" type="url" required value="'+E(s?.url||'')+'" placeholder="https://store-ledger-private-api.계정.workers.dev" autocomplete="url"></label>'+
+ '<label>관리자 비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="서버에 설정한 비밀번호"></label><button class="btn primary" type="submit"'+busy+'>'+(serverBusy?'연결 중…':connected?'다시 로그인':'서버 연결')+'</button></form>'+
+ '<div class="server-meta"><span>마지막 서버 저장 <b>'+E(last)+'</b></span><span>서버 버전 <b>'+E(s?.meta.version??'—')+'</b></span></div>'+
+ '<div class="server-actions"><button class="btn" id="server-retry"'+(!connected||serverBusy?' disabled':'')+'>연결 다시 확인</button><button class="btn" id="server-pull"'+(!connected||serverBusy?' disabled':'')+'>서버 자료 불러오기</button><button class="btn" id="server-push"'+(!connected||serverBusy?' disabled':'')+'>현재 장부를 서버에 저장</button><button class="btn subtle" id="server-logout"'+(!connected||serverBusy?' disabled':'')+'>로그아웃</button></div>'+
+ (s?.stopped?'<div class="notice storage-alert"><b>자료가 서로 달라 자동 저장을 멈췄습니다.</b><p>서버 자료를 불러오거나 현재 장부로 서버를 갱신할 수 있습니다. 바뀌는 쪽의 자료는 JSON으로 먼저 백업합니다.</p></div>':'')+
+ '<p class="server-help">연결 전에는 이 브라우저에만 보관됩니다. 로그인은 이 탭에서 12시간 유지되며, 금융 엑셀 원본 파일은 서버에 전송하지 않습니다.</p></div></section>';
+}
+async function serverAction(action,form){
+ if(!sync||serverBusy)return;
+ serverBusy=true;
+ try{
+  if(action==='login'){
+   const values=new FormData(form);form.elements.password.value='';
+   await sync.login(String(values.get('apiBase')||''),String(values.get('password')||''));
+  }else if(action==='pull')await sync.pull();
+  else if(action==='push')await sync.push();
+  else if(action==='logout')await sync.logout();
+  else await sync.start();
+ }catch(error){sync.error(error);toast(error.message)}
+ finally{serverBusy=false;render()}
 }
 function render(){
- $('#page-title').textContent=VIEWS[page]||'가게부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===page));
+ const mainPage=page==='lotto'?'sales':page==='review'?'import':page==='rules'?'categories':page;
+ $('#page-title').textContent=VIEWS[page]||'가계부';$$('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===mainPage));
  const navCount=$('#review-count');if(navCount){const ct=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)).length+(state.refunds||[]).filter(x=>x.status==='review').length;navCount.textContent=ct?ct.toLocaleString('ko-KR'):'';navCount.hidden=!ct}
  const container=$('#content');
  container.innerHTML=({dashboard,review:reviewPage,records:recordsPage,sheet:sheetPage,categories:categoriesPage,sales:salesPage,lotto:lottoPage,import:importPage,rules:rulesPage,settings:settingsPage})[page]();
+ const tabs=mainPage==='sales'?[['sales','월매출'],['lotto','토토 일별 매출']]:mainPage==='import'?[['import','파일 가져오기'],['review','미분류 검토']]:mainPage==='categories'?[['categories','분류 · 결제수단'],['rules','자동 분류 기준']]:null;
+ if(tabs){const head=$('.page-head',container);head?.insertAdjacentHTML('afterend','<nav class="workspace-tabs" aria-label="'+E(VIEWS[page])+' 세부 메뉴">'+tabs.map(([route,label])=>'<button data-nav="'+route+'" class="'+(route===page?'selected':'')+'" aria-current="'+(route===page?'page':'false')+'">'+label+'</button>').join('')+'</nav>')}
+
  $('#sidebar').classList.remove('open');
- setStatus('이 브라우저에 저장됨');
+ $('#mobile-menu').setAttribute('aria-expanded','false');
+ refreshSaveStatus();
 }
 function navigate(p){
  if(!VIEWS[p])return;
+ clearTimeout(queryTimer);
+ if(page==='sheet'){readSheetCells();saveSheetDraft()}
  if(p==='lotto'&&page==='sales')lottoMonth=salesMonth;
  if(p==='sales'&&page==='lotto')salesMonth=lottoMonth;
  page=p;offset=0;reviewOffset=0;scopeFilter='all';typeFilter='all';paymentFilter='all';q='';
@@ -1313,7 +1424,7 @@ function patchRecord(id,updates){
  normalizeWindmoon(row);
  if(row.scope==='excluded')row.status='excluded';
  else if(row.scope!=='review')row.status='confirmed';
- save();render();
+ if(!save()){render();return false}render();return true;
 }
 function chooseScope(id,scope){
  const row=state.records.find(x=>x.id===id);if(!row)return;
@@ -1321,8 +1432,7 @@ function chooseScope(id,scope){
  const corrected={...classification};
  delete corrected.action;delete corrected.confidence;
  Object.assign(corrected,canonicalCategory(corrected.ledgerType,corrected.category,corrected.subcategory));
- patchRecord(id,corrected);
- toast(scope==='exclude'?'거래를 지출 합계에서 제외했습니다.':LABEL[scope]+'으로 분류했습니다.');
+ if(patchRecord(id,corrected))toast(scope==='exclude'?'거래를 지출 합계에서 제외했습니다.':LABEL[scope]+'으로 분류했습니다.');
 }
 function fingerprint(row,occurrence){
  return [row.date,row.time,row.type,row.major,row.minor,row.merchant,Number(row.amount),row.payment,occurrence].join('¦');
@@ -1545,7 +1655,8 @@ function commitBank(){
 /* Backup imports are strictly non-destructive. Even a year-old V2 snapshot may
    only add missing records/dates; it cannot replace or silently edit newer data. */
 function planSafeLedgerMerge(current,incoming){
- if(!incoming||incoming.version!==2||!Array.isArray(incoming.records))throw Error('지원하지 않는 가게부 JSON 형식입니다.');
+ if(!incoming||incoming.version!==2||!Array.isArray(incoming.records))throw Error('지원하지 않는 가계부 JSON 형식입니다.');
+ if(!GagebuValidation.validV2({...blank(),...incoming}))throw Error('백업의 날짜·금액·분류 형식이 올바르지 않습니다. 기존 장부는 변경하지 않았습니다.');
  const currentRows=Array.isArray(current.records)?current.records:[];
  const ids=new Set(currentRows.map(x=>String(x.id||'')).filter(Boolean));
  const banks=new Set(currentRows.flatMap(x=>[x.bankKey,...(Array.isArray(x.extraBankKeys)?x.extraBankKeys:[])]).filter(Boolean));
@@ -1564,7 +1675,7 @@ function planSafeLedgerMerge(current,incoming){
  const additions=[];
  const byId=new Map(currentRows.filter(x=>x.id!=null).map(x=>[String(x.id),x]));
  for(const raw of incoming.records){
-   if(!raw||typeof raw!=='object'||!String(raw.date||'').match(/^\d{4}-\d{2}-\d{2}$/)
+   if(!raw||typeof raw!=='object'||!GagebuValidation.date(raw.date)
       ||!Number.isSafeInteger(Number(raw.amount))||Number(raw.amount)<0
       ||!['expense','income','transfer'].includes(raw.direction)){invalid++;continue}
    const x={...raw},id=String(x.id||''),b=String(x.bankKey||''),s=sourceKey(x);
@@ -1617,12 +1728,15 @@ function planSafeLedgerMerge(current,incoming){
  const audit=Array.isArray(base.excludedAudit)?[...base.excludedAudit]:[];
  const existingRefunds=Array.isArray(current.refunds)?current.refunds:[];
  const refundKeys=new Set(existingRefunds.map(x=>x.bankKey||x.id));
- const recordKeys=new Set([...currentRows,...additions].map(x=>x.id));
- const refundAdd=(Array.isArray(incoming.refunds)?incoming.refunds:[]).filter(x=>{
-   if(!x||!x.bankKey||refundKeys.has(x.bankKey)||!Number.isSafeInteger(Number(x.amount))||Number(x.amount)<=0)return false;
-   if(x.status==='matched'&&(!x.refundOf||!recordKeys.has(x.refundOf)))return false;
-   refundKeys.add(x.bankKey);return true;
- });
+ const recordKeys=new Set([...currentRows,...additions].filter(x=>x.direction==='expense').map(x=>x.id));
+ const refundIds=new Set(existingRefunds.map(x=>x.id)),refundAdd=[];
+ for(const raw of incoming.refunds||[]){
+   const key=raw.bankKey||raw.id;
+   if(refundKeys.has(key)||refundIds.has(raw.id))continue;
+   const x={...raw};
+   if(x.status==='matched'&&!recordKeys.has(x.refundOf))Object.assign(x,{status:'review',refundOf:'',reason:'같은 거래 병합 후 원결제 연결 확인 필요'});
+   refundKeys.add(key);refundIds.add(x.id);refundAdd.push(x);
+ }
  const next={...base,version:2,records:[...currentRows,...additions],refunds:[...existingRefunds,...refundAdd],
    dailyLotto:[...(current.dailyLotto||[]),...dailyAdd],
    storeProfits:{...(current.storeProfits||{}),...profitAdd},
@@ -1693,10 +1807,10 @@ function applyRefundReconciliation(file,filename){
  const description='카드 환불 '+plan.refunds.length+'건 (원결제 연결 '+applied.length+
    '건 · 확인 필요 '+pending.length+'건) / 기존 장부 중복 조정 '+plan.updated.length+'건'+
    (plan.missing||plan.conflicts?'\n누락 '+plan.missing+'건 · 기존 수정과 충돌 '+plan.conflicts+'건은 제외':'');
- if(!confirm('기존 가게부를 유지한 채 다음 항목을 반영합니다.\n\n'+description+
+ if(!confirm('기존 가계부를 유지한 채 다음 항목을 반영합니다.\n\n'+description+
    '\n\n대응하는 원결제에 환불액을 차감하고, 원본 승인·환불 금액은 보존합니다.'+
    '\n수정 전 전체 JSON 자동 백업을 다운로드합니다. 진행할까요?'))return;
- try{download('가게부_V2_환불반영전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+ try{download('가계부_V2_환불반영전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
      JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
  catch(e){toast('백업 파일 생성 실패: 수정하지 않았습니다.');return}
  const previous=state;
@@ -1741,7 +1855,7 @@ function applyOnnuriCorrections(patch,filename){
    '\n\n금액·원본 결제수단·은행 원본 정보는 유지하고, 사용자 확인 거래처·약국 분류·연동 카드만 수정합니다.'+
    (result.missing||result.conflicts?'\n미등록 '+result.missing+'건 · 내용 불일치 '+result.conflicts+'건은 변경하지 않습니다.':'')+
    '\n\n수정 전 JSON을 자동 백업합니다. 계속할까요?'))return;
- try{download('가게부_V2_수정전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+ try{download('가계부_V2_수정전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
    JSON.stringify(state,null,2),'application/json;charset=utf-8')}
  catch(err){toast('백업 생성 실패. 자료를 변경하지 않았습니다.');return}
  const previous=state,mapping=new Map(result.changes.map(x=>[x.id,x.set]));
@@ -1778,11 +1892,11 @@ async function importLegacy(file){
  if(!confirm(message))return;
  // User-owned recovery snapshot before the only write. No public/server upload.
  try{
-   download('가게부_V2_병합전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
+   download('가계부_V2_병합전_자동백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',
      JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8');
  }catch(err){toast('자동 백업 파일 생성 실패: 데이터를 변경하지 않았습니다.');return}
  const previous=state;
- plan.next.imports=[...(state.imports||[]),{at:new Date().toISOString(),
+ plan.next.imports=[...(plan.next.imports||[]),{at:new Date().toISOString(),
    name:file.name,source:'safe-merge',added:plan.added,duplicates:plan.duplicates,
    conflicts:plan.conflicts,dailyAdded:plan.dailyAdded,profitsAdded:plan.profitsAdded,refundsAdded:plan.refundsAdded}];
  state=plan.next;
@@ -1795,12 +1909,12 @@ function download(name,contents,type){
  const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function exportJSON(){download('가게부_V2_개인백업_'+now()+'.json',JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
+function exportJSON(){download('가계부_V2_개인백업_'+now()+'.json',JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
 function exportCSV(){
  const headers=['날짜','시간','거래처','실제 결제수단','뱅샐 등록 카드·원본 결제수단','온누리 사용','순지출','원결제','연결 환불','사용처','지출종류','대분류','소분류','상태','원본','메모'];
  const rows=state.records.filter(x=>x.direction==='expense').map(x=>[x.date,x.time,x.merchant,paymentLabel(x),x.bankPayment||x.payment||'',isOnnuri(x)?'예':'아니오',netExpenseAmount(x),x.amount,refundedAmount(x),LABEL[x.scope]||x.scope,GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note]);
  const enc=x=>'"'+String(x??'').replaceAll('"','""')+'"';
- download('가게부_V2_거래내역_'+now()+'.csv','\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+ download('가계부_V2_거래내역_'+now()+'.csv','\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n'),'text/csv;charset=utf-8');
 }
 /* Explicit deletion operations. Never mutate V1 localStorage or source files.
    Storage is committed before UI acknowledges removal. */
@@ -1815,7 +1929,8 @@ function deleteRecordById(id,confirmAction=true){
  if(records.length===state.records.length)return false;
  const profits={...(state.storeProfits||{})};
  if(isIncome&&row.category==='가게 매출'&&!records.some(x=>x.direction==='income'&&x.category==='가게 매출'&&x.date.slice(0,7)===row.date.slice(0,7)))delete profits[row.date.slice(0,7)];
- state={...state,records,storeProfits:profits};
+ const refunds=(state.refunds||[]).map(x=>x.refundOf===id?{...x,status:'review',refundOf:null,previousRefundOf:id,reason:'원결제 삭제 후 환불 연결 확인 필요'}:x);
+ state={...state,records,storeProfits:profits,refunds};
  if(!save()){state=before;return false}
  preview=null;render();toast('기록 1건을 삭제했습니다.');
  return true;
@@ -1833,17 +1948,18 @@ function deleteDailyLotto(date,confirmAction=true){
 }
 function resetAllV2(confirmAction=true){
  if(confirmAction){
-   const entry=prompt('V2의 모든 연습 기록과 사용자 규칙을 삭제합니다. 복구하려면 별도 JSON 백업이 필요합니다.\n진행하려면 정확히 "전체삭제"를 입력하세요.','');
+   const entry=prompt('전체 거래와 사용자 규칙을 초기화합니다. 서버 연결 중에는 서버에도 반영됩니다.\n진행하려면 정확히 "전체삭제"를 입력하세요.','');
    if(entry!=='전체삭제')return false;
-   if(!confirm('최종 확인: V2 거래 '+state.records.length+'건, 토토 일별 '+(state.dailyLotto||[]).length+'건 및 설정을 모두 초기화할까요?\n기존 V1 기록은 삭제하지 않습니다.'))return false;
+   if(!confirm('최종 확인: 거래 '+state.records.length+'건, 토토 일별 '+(state.dailyLotto||[]).length+'건 및 설정을 모두 초기화할까요?\n초기화 전 자동 백업을 내려받습니다.'))return false;
  }
+ if(confirmAction)exportJSON();
  const previous=state;
  state={...blank(),legacyDailySynced:true,bankSaladBaselineVersion:2,windmoonSubcategoryMigration:true,migratedFromV1:false};
  if(!save()){state=previous;return false}
  preview=null;lastBankFile=null;bankLoadToken++;
  taxonomy();
  editing=null;sheetData.rows=[];sheetData.date=now();period='all';scopeFilter='all';typeFilter='all';q='';offset=0;reviewOffset=0;salesMonth=ym();lottoMonth=ym();
- render();toast('V2 데이터가 초기화됐습니다. 기존 V1 저장 기록은 유지됩니다.');
+ render();toast('장부를 초기화했습니다.');
  return true;
 }
 
@@ -1860,7 +1976,9 @@ function editRecord(id){
  const r=id?state.records.find(x=>x.id===id):null;
  editing=id||'new';
  const dlg=$('#editor');
- $('#editor-title').textContent=r?'거래 수정':'거래 직접 입력';
+ $('#editor-title').textContent=r?(r.status==='excluded'?'제외된 거래 수정':'거래 수정'):'거래 직접 입력';
+ $('#editor-save').textContent=r?.status==='excluded'?'수정 후 복원':'거래 저장';
+ $('#editor-exclude-record').hidden=!r||r.status==='excluded';
  const del=$('#editor-delete-record');if(del){del.hidden=!r;del.dataset.deleteRecord=r?.id||''}
  const f=$('#editor-form');
  f.elements.date.value=r?.date||now();
@@ -1873,21 +1991,24 @@ function editRecord(id){
  const cardHint=$('#editor-registered-card');if(cardHint)cardHint.textContent=[r?.bankPayment?'뱅크샐러드 등록 카드: '+r.bankPayment:'',r?.onnuriLinkedCard?'온누리 연동 카드 (사용자 확인): '+r.onnuriLinkedCard:'',!r?.bankPayment&&!r?.onnuriLinkedCard&&r?.payment?'원본 결제수단: '+r.payment:''].filter(Boolean).join(' · ');
  f.elements.scope.innerHTML=sheetOptions(Object.entries(LABEL).filter(([id])=>!['transfer','excluded'].includes(id)),r?.scope||'personal');
  f.elements.ledgerType.innerHTML=sheetOptions(Object.entries(GROUP),r?.ledgerType||'consumption');
- f.elements.scope.value=r?.scope||'personal';
+ f.elements.scope.value=r?.scope&&r.scope!=='excluded'?r.scope:'personal';
  f.elements.ledgerType.value=r?.ledgerType||'consumption';
  f.elements.category.value=r?.category||'';
  f.elements.subcategory.value=r?.subcategory||'';
  if(!r?.subcategory&&r?.scope==='windmoon')f.elements.subcategory.value='풍월관';
  f.elements.note.value=r?.note||'';
  updateEditorSuggestions();
+ $('#editor-merchant-options').innerHTML=valueOptions([...new Set(state.records.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(x=>x.merchant).filter(Boolean))].slice(0,120));
  syncEditorOnnuriDefault();
+ $('#editor-details').open=!!r;
  dlg.showModal();
+ if(!r)f.elements.amount.focus();
 }
 function submitEditor(f){
  if(editing==='new')syncEditorOnnuriDefault();
- const data=new FormData(f);const amt=Number(data.get('amount'));
+ const data=new FormData(f);const amt=numInput(data.get('amount'));
  const merchant=String(data.get('merchant')||'').trim();
- if(!data.get('date')||!(amt>0)||!merchant){toast('날짜·금액·거래처를 입력하세요.');return}
+ if(!GagebuValidation.date(String(data.get('date')))||!GagebuValidation.amount(amt)||amt<=0||!merchant){toast('날짜·원 단위 정수 금액·거래처를 확인하세요.');return}
  const scope=String(data.get('scope')),ledgerType=String(data.get('ledgerType')),category=String(data.get('category')||'').trim();
  const previous=editing!=='new'?state.records.find(x=>x.id===editing):null;
  const touched=f.elements.onnuri.dataset.onnuriTouched==='1';
@@ -1897,16 +2018,27 @@ function submitEditor(f){
  onnuri:data.has('onnuri'),onnuriAuto:auto&&!touched,onnuriManual:touched||!!previous?.onnuriManual,note:String(data.get('note')||''),scope,ledgerType,category:category||'기타',subcategory:String(data.get('subcategory')||''),status:scope==='review'?'review':'confirmed',manual:true,direction:'expense'};
  normalizeWindmoon(entry);
  Object.assign(entry,canonicalCategory(entry.ledgerType,entry.category,entry.subcategory));
- if(!addInputCategories([entry]))return;
+ try{if(!addInputCategories([entry],!!category))return}catch(error){toast(error.message);return}
  if(editing&&editing!=='new'){const row=state.records.find(x=>x.id===editing);if(row)Object.assign(row,entry)}
  else state.records.push({...entry,id:'manual-'+uid(),direction:'expense',source:'manual',sourceSheet:'직접 입력',time:'',bankKey:''});
- $('#editor').close();save();render();toast('거래를 저장했습니다.');
+ if(!save())return;
+ $('#editor').close();render();toast('거래를 저장했습니다.');
 }
 function onClick(event){
  const target=event.target.closest('button,a,[data-nav]');if(!target)return;
  if(target.dataset.nav){event.preventDefault();navigate(target.dataset.nav);return}
+ if(['top-new-record','mobile-new-record','dashboard-new-record'].includes(target.id)){editRecord();return}
+ if(['server-retry','server-pull','server-push','server-logout'].includes(target.id)){void serverAction(target.id.slice(7));return}
+ if(target.id==='backup-unreadable'){try{download('가계부_읽기오류_원본_'+now()+'.json',localStorage.getItem(KEY)||'','application/json;charset=utf-8')}catch{toast('원본을 읽지 못했습니다. 브라우저 저장 권한을 확인하세요.')}return}
  if(target.dataset.scope){chooseScope(target.dataset.id,target.dataset.scope);return}
  if(target.dataset.edit){editRecord(target.dataset.edit);return}
+ if(target.dataset.manageRefund){openRefund(target.dataset.manageRefund);return}
+ if(target.dataset.refundTarget){changeRefund('link',target.dataset.refundTarget);return}
+ if(target.dataset.refundAction){changeRefund(target.dataset.refundAction);return}
+ if(['close-refund-editor','close-refund-secondary'].includes(target.id)){$('#refund-editor').close();return}
+ if(target.dataset.recordMode){recordsMode=target.dataset.recordMode;offset=0;render();return}
+ if(target.dataset.restoreRecord){restoreRecord(target.dataset.restoreRecord);return}
+ if(target.id==='editor-exclude-record'){excludeRecord(editing);return}
  if(target.dataset.taxHide){
    const action=target.dataset.taxHide,group=target.dataset.taxGroup||'',major=target.dataset.taxMajor||'',minor=target.dataset.taxMinor||'';
    if(!confirm('이 분류를 신규 입력 목록에서 숨길까요? 과거 거래는 삭제되지 않습니다.'))return;
@@ -1945,9 +2077,9 @@ function onClick(event){
  if(target.id==='discard-import'){preview=null;render();return}
  if(target.id==='export-json'){exportJSON();return}
  if(target.id==='export-csv'){exportCSV();return}
- if(target.id==='mobile-menu'){ $('#sidebar').classList.toggle('open');return}
+ if(target.id==='mobile-menu'){const open=$('#sidebar').classList.toggle('open');target.setAttribute('aria-expanded',String(open));return}
  if(target.id==='close-sidebar'){ $('#sidebar').classList.remove('open');return}
- if(target.id==='close-editor'){$('#editor').close();return}
+ if(['close-editor','close-editor-secondary'].includes(target.id)){$('#editor').close();return}
  if(target.dataset.pageStep){
    offset=Math.max(0,offset+Number(target.dataset.pageStep)*80);render();return;
  }
@@ -2032,13 +2164,32 @@ function onChange(e){
  if(el.id==='query-filter'){q=el.value;offset=0;render();$('#query-filter')?.focus();return}
 }
 function init(){
+ restoreSheetDraft();
  load();
+ sync=new GagebuSync.LedgerSync({getState:()=>state,
+  applyRemote:data=>{
+   try{
+    if(corruptStorage){download('가계부_읽기오류_원본_'+now()+'.json',localStorage.getItem(KEY)||'','application/json;charset=utf-8')}
+    const next={...blank(),...data},raw=JSON.stringify(next);localStorage.setItem(KEY,raw);
+    state=next;persistedState=raw;corruptStorage=false;storageFailure='';render();return true;
+   }catch{return false}
+  },onStatus:()=>{refreshSaveStatus();if(page==='settings'&&!serverBusy&&!$('#server-login-form')?.contains(document.activeElement)){
+    const section=$('.server-storage');if(section)section.outerHTML=serverSettings();
+   }},onError:error=>toast(error.message),confirm:message=>confirm(message),
+  backup:(data,label)=>download('가계부_'+label+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(data,null,2),'application/json;charset=utf-8')});
  const route=location.hash.replace(/^#/,'');if(VIEWS[route])page=route;
  document.addEventListener('click',onClick);
  document.addEventListener('change',onChange);
+ document.addEventListener('change',()=>{if(page==='sheet')saveSheetDraft()});
  document.addEventListener('input',e=>{
    if(['edit-merchant','edit-payment'].includes(e.target.id))syncEditorOnnuriDefault();
-   if(e.target.id==='query-filter')onChange(e);
+   if(e.target.id==='refund-query')renderRefundCandidates();
+   if(e.target.id==='query-filter'){
+     clearTimeout(queryTimer);
+     if(!e.isComposing){const start=e.target.selectionStart,end=e.target.selectionEnd,value=e.target.value;
+       queryTimer=setTimeout(()=>{q=value;offset=0;render();const search=$('#query-filter');search?.focus();search?.setSelectionRange(start,end)},220);
+     }
+   }
    if(e.target.dataset?.sheetField){
      const row=sheetData.rows[Number(e.target.dataset.sheetIndex)];
      if(row&&e.target.dataset.sheetField!=='onnuri'){
@@ -2057,9 +2208,11 @@ function init(){
      const row=e.target.closest('tr'),commission=row?.querySelector('[data-lotto-input="commission"]'),handle=numInput(e.target.value);
      if(commission&&commission.value.trim()===''&&Number.isFinite(handle))commission.placeholder='예상 '+won(estimatedCommission(handle));
    }
+   if(e.target.dataset?.sheetField)saveSheetDraft();
  });
  $('#editor-form').addEventListener('submit',e=>{e.preventDefault();submitEditor(e.target)});
  document.addEventListener('submit',e=>{
+   if(e.target.id==='server-login-form'){e.preventDefault();void serverAction('login',e.target)}
    if(e.target.matches('.sales-form')){e.preventDefault();saveMonthlySale(e.target)}
    if(e.target.id==='lotto-daily-form'){e.preventDefault();saveLottoDaily(e.target)}
    if(e.target.dataset.taxAction){e.preventDefault();handleTaxForm(e.target)}
@@ -2067,7 +2220,7 @@ function init(){
  document.addEventListener('paste',pasteSheetGrid);
  document.addEventListener('keydown',e=>{
    if(sheetMove(e))return;
-   if(e.key==='Escape'){$('#sidebar').classList.remove('open')}
+   if(e.key==='Escape'){$('#sidebar').classList.remove('open');$('#mobile-menu').setAttribute('aria-expanded','false')}
    if(page==='review'&&!$('#editor').open&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')){
      const row=$('.review-card');const id=row?.dataset.reviewId;
      const mapping={'1':'personal','2':'business','3':'windmoon'};
@@ -2077,8 +2230,14 @@ function init(){
  const drop=$('#content');
  document.addEventListener('dragover',e=>{if(page==='import'&&e.dataTransfer?.types.includes('Files'))e.preventDefault()});
  document.addEventListener('drop',e=>{if(page!=='import'||!e.dataTransfer?.files?.length)return;e.preventDefault();onBankFile(e.dataTransfer.files[0])});
- window.addEventListener('storage',e=>{if(e.key===KEY){try{const x=JSON.parse(e.newValue);if(x.version===2&&Array.isArray(x.records)){state=x;render()}}catch(_){}}});
+ window.addEventListener('storage',e=>{if(e.key===KEY&&e.newValue){try{const x=JSON.parse(e.newValue);if(GagebuValidation.validV2(x)){state=x;persistedState=e.newValue;sync.localChanged();render()}}catch(_){}}});
+ window.addEventListener('online',()=>void sync.start());
+ document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&sync.token)void sync.start()});
+ window.addEventListener('hashchange',()=>{const route=location.hash.slice(1);if(VIEWS[route]&&route!==page)navigate(route)});
+ document.addEventListener('click',e=>{if($('#sidebar').classList.contains('open')&&!e.target.closest('#sidebar,#mobile-menu')){$('#sidebar').classList.remove('open');$('#mobile-menu').setAttribute('aria-expanded','false')}});
+ window.addEventListener('beforeunload',e=>{if(sync.flight||sync.token&&sync.meta.dirty){e.preventDefault();e.returnValue=''}});
  render();
+ if(!corruptStorage)void sync.start();
 }
 init();
 })();
