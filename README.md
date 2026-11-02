@@ -52,7 +52,7 @@ npm run build
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | 배포할 Cloudflare 계정 |
 | `CLOUDFLARE_API_TOKEN` | 해당 계정의 D1·Worker 배포 권한 |
-| `STORE_LEDGER_ADMIN_PASSWORD` | 가계부 로그인 비밀번호, 16자 이상 |
+| `STORE_LEDGER_ADMIN_PASSWORD` | 가계부 로그인 비밀번호, 8자 이상 |
 | `STORE_LEDGER_SESSION_PEPPER` | 세션 해시용 임의 비밀값, 32자 이상 |
 
 `wrangler.toml.example`을 바탕으로 로컬 설정을 만들 수도 있습니다. `db/schema.sql`은 `CREATE TABLE IF NOT EXISTS`와 `INSERT OR IGNORE`만 사용합니다. Worker의 `/health`와 로그인 후 V2 저장·다시 읽기까지 검증한 후 서버 연결 완료로 안내하세요.

@@ -34,8 +34,12 @@ jobs:
             echo "::error::Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN under repository Actions secrets."
             exit 1
           fi
-          if [[ ${#LEDGER_ADMIN_PASSWORD} -lt 16 || ${#LEDGER_SESSION_PEPPER} -lt 32 ]]; then
-            echo "::error::Set STORE_LEDGER_ADMIN_PASSWORD (16+ characters) and STORE_LEDGER_SESSION_PEPPER (32+ characters)."
+          if [[ ${#LEDGER_ADMIN_PASSWORD} -lt 8 ]]; then
+            echo "::error::Set STORE_LEDGER_ADMIN_PASSWORD (8+ characters)."
+            exit 1
+          fi
+          if [[ ${#LEDGER_SESSION_PEPPER} -lt 32 ]]; then
+            echo "::error::Set STORE_LEDGER_SESSION_PEPPER (32+ characters)."
             exit 1
           fi
       - name: Create or reuse dedicated Cloudflare D1

@@ -53,7 +53,7 @@ test('D1 batch failure rolls back CAS and partial chunk writes',async()=>{
  assert.equal((await readDocument(db)).version,1);assert.deepEqual((await readDocument(db)).data,blank());
 });
 test('API login, V2 write/read, CAS conflict, logout and origin protection',async()=>{
- const env={DB:new D1(),ADMIN_PASSWORD:'test-password-123456789',SESSION_PEPPER:'test-pepper-123456789123456789123456789'};
+ const env={DB:new D1(),ADMIN_PASSWORD:'testpass',SESSION_PEPPER:'test-pepper-123456789123456789123456789'};
  assert.equal((await worker.fetch(request('/api/v2/state'),env)).status,401);
  const login=await worker.fetch(request('/api/login','POST',{password:env.ADMIN_PASSWORD}),env),{token}=await login.json();assert(token);
  const state={...blank(),records:[record()]};
