@@ -20,6 +20,9 @@ const verifier=randomBytes(32).toString('base64url'),challenge=createHash('sha25
 const query=new URLSearchParams({client_id:client.client_id,redirect_uri:redirect,response_type:'code',scope:'gagebu:read',resource,code_challenge_method:'S256',code_challenge:challenge,state:randomBytes(16).toString('hex')});
 const approval=await request('/oauth/authorize?'+query),html=await approval.text(),flow=html.match(/name="flow" value="([^"]+)"/)?.[1],cookie=approval.headers.get('set-cookie')?.split(';')[0];
 if(!flow||!cookie)throw Error('OAuth approval form missing');
+if(approval.headers.get('referrer-policy')!=='same-origin')throw Error('OAuth form hides the browser POST Origin');
+const formAction=approval.headers.get('content-security-policy')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('form-action '));
+if(formAction!=="form-action 'self' "+new URL(redirect).origin)throw Error('OAuth form blocks its registered callback');
 const consent=await formRequest('/oauth/authorize',{flow,password,decision:'allow'},{Origin:base,Cookie:cookie});
 if(consent.status!==302)throw Error('OAuth sign-in check failed');
 const callback=new URL(consent.headers.get('location'));if(callback.searchParams.get('state')!==query.get('state'))throw Error('OAuth state mismatch');
@@ -32,7 +35,7 @@ try{
  const denied=await call('tools/call',{name:'ledger_update_transaction',arguments:{}});if(!denied.result?.isError)throw Error('Read-only token unexpectedly accepted a write');
  const after=JSON.parse((await call('tools/call',{name:'sites_status',arguments:{}})).result.content[0].text);
  if(before.sites[0].version!==after.sites[0].version)throw Error('Ledger changed during check; no financial write was requested');
- console.log(JSON.stringify({mcpCheck:{oauth:true,discovery:true,readTools:3,writeDenied:true,ledgerVersionUnchanged:true}}));
+ console.log(JSON.stringify({mcpCheck:{oauth:true,browserFormHeaders:true,discovery:true,readTools:3,writeDenied:true,ledgerVersionUnchanged:true}}));
 }finally{
  await ok(await formRequest('/oauth/revoke',{client_id:client.client_id,token:tokens.refresh_token}));
  const revoked=await jsonRequest('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},{Authorization:'Bearer '+tokens.access_token});

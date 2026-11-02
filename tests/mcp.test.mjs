@@ -18,7 +18,7 @@ async function authorization(env,{scope='gagebu:read gagebu:write',client,verifi
  const query=new URLSearchParams({client_id:client.client_id,redirect_uri:client.redirect_uris[0],response_type:'code',scope,resource,code_challenge_method:'S256',code_challenge:await pkce(verifier),state:'test-state'});
  const page=await worker.fetch(request('/oauth/authorize?'+query),env),html=await page.text(),flow=html.match(/name="flow" value="([^"]+)"/)?.[1],cookie=page.headers.get('set-cookie')?.split(';')[0];
  assert(flow);const approved=await worker.fetch(request('/oauth/authorize',{method:'POST',form:{flow,password,decision:'allow'},headers:{Origin:origin,Cookie:cookie,...headers}}),env);
- return {client,verifier,approved,flow,cookie};
+ return {client,verifier,approved,flow,cookie,page};
 }
 async function token(env,auth,override={}){const code=new URL(auth.approved.headers.get('location')).searchParams.get('code');return worker.fetch(request('/oauth/token',{method:'POST',form:{grant_type:'authorization_code',client_id:auth.client.client_id,redirect_uri:auth.client.redirect_uris[0],resource,code,code_verifier:auth.verifier,...override}}),env)}
 async function connected(env,scope){const auth=await authorization(env,{scope});assert.equal(auth.approved.status,302);return {auth,tokens:await(await token(env,auth)).json()}}
@@ -127,4 +127,26 @@ test('expired codes and incorrect cookies cannot grant an MCP session',async()=>
  const env=await setup(),bad=await authorization(env,{headers:{Cookie:'mcp_csrf=wrong'}});assert.equal(bad.approved.status,403);
  const auth=await authorization(env);env.DB.sql.prepare('UPDATE mcp_codes SET expires_at=0').run();assert.equal((await token(env,auth)).status,400);
  assert.equal(env.DB.sql.prepare('SELECT count(*) n FROM mcp_tokens').get().n,0);
+});
+
+test('browser consent preserves same-origin Origin and permits only the registered callback destination',async()=>{
+ const env=await setup(),auth=await authorization(env);
+ assert.equal(auth.page.headers.get('referrer-policy'),'same-origin');
+ const csp=auth.page.headers.get('content-security-policy');
+ const formAction=csp.split(';').map(x=>x.trim()).find(x=>x.startsWith('form-action '));
+ assert.equal(formAction,"form-action 'self' https://client.example");
+ assert.equal(auth.approved.status,302);
+ assert.equal(new URL(auth.approved.headers.get('location')).origin,'https://client.example');
+ const guide=await worker.fetch(request('/manage'),env);
+ assert.equal(guide.headers.get('content-security-policy').split(';').map(x=>x.trim()).find(x=>x.startsWith('form-action ')),"form-action 'self'");
+ assert.equal((await readDocument(env.DB)).version,1);
+});
+test('opaque or missing Origin cannot bypass consent checks or issue authorization codes',async()=>{
+ const env=await setup(),auth=await authorization(env);
+ const count=()=>env.DB.sql.prepare('SELECT count(*) n FROM mcp_codes').get().n,before=count();
+ for(const extra of [{Origin:'null'},{Origin:'https://evil.example'},{}]){
+  const rejected=await worker.fetch(request('/oauth/authorize',{method:'POST',form:{flow:auth.flow,password:'testpass',decision:'allow'},headers:{Cookie:auth.cookie,...extra}}),env);
+  assert.equal(rejected.status,403);assert.equal(count(),before);
+ }
+ assert.equal((await readDocument(env.DB)).version,1);
 });
