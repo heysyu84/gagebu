@@ -16,17 +16,64 @@ function ledger(data=empty()){
   document:{querySelector:()=>ui,querySelectorAll:()=>[]},confirm:()=>true,setTimeout,clearTimeout});
  context.window=context;
  for(const script of ['ledger-validation.js','ledger-rules-v2.js'])vm.runInContext(file(script),context);
- const expose=`render=()=>{};toast=()=>{};globalThis.ledgerTest={get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},setRefund:id=>activeRefund=id,planSafeLedgerMerge,netExpenseAmount,financials,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save};`;
+ const expose=`render=()=>{};toast=()=>{};globalThis.ledgerTest={get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},setRefund:id=>activeRefund=id,setView:options=>{page=options.page||'records';period=options.period||'all';scopeFilter=options.scope||'all';typeFilter=options.type||'all';paymentFilter=options.payment||'all';q=options.query||'';recordsMode=options.mode||'active'},planSafeLedgerMerge,netExpenseAmount,financials,refundEntries,ledgerEntries,filtered,recordsPage,dashboard,transactionTable,transactionCSV,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save};`;
  const source=file('ledger-v2.js');assert(source.endsWith('init();\n})();\n'));
  vm.runInContext(source.replace(/init\(\);\n\}\)\(\);\n$/,expose+'\n})();\n'),context);
  const api=context.ledgerTest;api.set(data);
  return {...api,storage:memory,fail:()=>{fail=true}};
 }
-test('manual partial refunds and FX differences offset the original expense month',()=>{
- const f=ledger({...empty(),records:[purchase()],refunds:[refund()]});f.setRefund('r');f.changeRefund('link','p');
- assert.equal(f.get().refunds[0].status,'matched');assert.equal(f.financials('2026-10').expenses,7000);
- assert.equal(f.financials('2026-11').income,0);assert.equal(f.financials('2026-11').expenses,0);
- f.get().refunds[0].amount=10100;assert.equal(f.netExpenseAmount(f.get().records[0]),-100);
+test('partial refunds use their own date and linking never deducts them twice',()=>{
+ const f=ledger({...empty(),records:[purchase()],refunds:[refund()]});
+ assert.equal(f.financials('2026-10').expenses,10000);
+ assert.equal(f.financials('2026-11').income,0);assert.equal(f.financials('2026-11').expenses,-3000);
+ assert.equal(f.financials('all').expenses,7000);
+ f.setRefund('r');f.changeRefund('link','p');
+ assert.equal(f.get().refunds[0].status,'matched');assert.equal(f.netExpenseAmount(f.get().records[0]),7000);
+ assert.equal(f.financials('2026-10').expenses,10000);assert.equal(f.financials('2026-11').expenses,-3000);
+ assert.equal(f.financials('all').expenses,7000);
+ f.changeRefund('unlink');assert.equal(f.financials('all').expenses,7000);
+ f.get().refunds[0].amount=10100;f.changeRefund('link','p');
+ assert.equal(f.netExpenseAmount(f.get().records[0]),-100);
+ assert.equal(f.financials('all').expenses,-100);assert.equal(f.financials('2026-11').expenses,-10100);
+});
+test('multiple partial refunds are independent credits and exclusion restores correctly',()=>{
+ const f=ledger({...empty(),records:[purchase()],refunds:[refund(),{...refund('second'),date:'2026-12-04',amount:4000,status:'matched',refundOf:'p'}]});
+ assert.equal(f.financials('all').expenses,3000);
+ assert.equal(f.financials('2026-11').expenses,-3000);assert.equal(f.financials('2026-12').expenses,-4000);
+ f.setRefund('r');f.changeRefund('exclude');
+ assert.equal(f.financials('2026-11').expenses,0);assert.equal(f.financials('all').expenses,6000);
+ f.changeRefund('restore');assert.equal(f.financials('all').expenses,3000);
+});
+test('a refund without a purchase appears in the ledger without creating stored transactions',()=>{
+ const f=ledger({...empty(),refunds:[refund()]}),before=JSON.stringify(f.get());
+ const entries=f.ledgerEntries();assert.equal(entries.length,1);assert.equal(entries[0].date,'2026-11-02');
+ assert.equal(entries[0].amount,-3000);assert.equal(entries[0].category,'환불');assert.equal(entries[0].scope,'refund-unassigned');
+ const html=f.transactionTable(entries);assert.match(html,/\+3,000원/);assert.match(html,/원결제 미연결/);assert.match(html,/data-manage-refund="r"/);
+ assert.equal(f.financials('2026-11').expenses,-3000);assert.equal(f.financials('2026-11').balance,3000);
+ assert.equal(JSON.stringify(f.get()),before);
+});
+test('refund date, payment and refund-only filters match the displayed net total',()=>{
+ const f=ledger({...empty(),records:[purchase()],refunds:[{...refund(),status:'matched',refundOf:'p'},{...refund('unlinked'),amount:2000},{...refund('excluded'),status:'excluded',amount:500}]});
+ f.setView({period:'2026-11',type:'refund',payment:'카드'});
+ assert.equal(f.filtered(f.ledgerEntries()).length,3);
+ const html=f.recordsPage();assert.match(html,/순지출 -5,000원/);assert.match(html,/전체 지출 · 환불/);assert.match(html,/금액 반영됨/);
+ f.setView({period:'2026-11',scope:'personal'});assert.equal(f.filtered(f.ledgerEntries()).length,1);
+ f.setView({period:'2026-11',scope:'refund-unassigned'});assert.equal(f.filtered(f.ledgerEntries()).length,2);
+ f.setView({period:'2026-10',type:'refund'});assert.equal(f.filtered(f.ledgerEntries()).length,0);
+});
+test('CSV expense postings add to the same total including unlinked and excluded refunds',()=>{
+ const f=ledger({...empty(),records:[purchase(),{...purchase('excluded'),amount:20000,status:'excluded'}],refunds:[refund(),{...refund('excluded-refund'),amount:500,status:'excluded'}]});
+ const lines=f.transactionCSV().replace(/^\uFEFF/,'').split('\r\n');
+ const parse=line=>[...line.matchAll(/"((?:[^"]|"")*)"(?:,|$)/g)].map(m=>m[1].replaceAll('""','"'));
+ const [header,...rows]=lines.map(parse);const amount=header.indexOf('지출 반영액'),kind=header.indexOf('항목');
+ assert.equal(rows.length,4);assert.equal(rows.reduce((sum,row)=>sum+Number(row[amount]),0),f.financials('all').expenses);
+ const credit=rows.find(row=>row[kind]==='환불'&&row[amount]==='-3000');assert(credit);assert.equal(credit[0],'2026-11-02');
+ assert.equal(credit[header.indexOf('원결제 연결상태')],'미연결');
+});
+test('refund-only months render in the dashboard with an explicit credit total',()=>{
+ const f=ledger({...empty(),records:[purchase()],refunds:[refund()]});f.setView({page:'dashboard',period:'2026-11'});
+ const html=f.dashboard();assert.match(html,/환불 1건/);assert.match(html,/-3,000원/);assert.match(html,/사용처 미지정 환불 1건/);
+ assert.match(html,/class="expense refund"/);assert(!html.includes('NaN'));assert(!html.includes('Infinity'));
 });
 test('deleting a purchase keeps its refund in review instead of leaving an orphan link',()=>{
  const f=ledger({...empty(),records:[purchase()],refunds:[{...refund(),status:'matched',refundOf:'p'}]});

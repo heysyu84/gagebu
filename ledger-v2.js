@@ -191,8 +191,22 @@ function load(){
    state.paymentMethods=state.paymentMethods.filter(x=>!isPaymentMonthMarker(x));save();
  }
 }
-const relevant=()=>state.records.filter(x=>x.status!=='excluded'&&x.direction==='expense');
-const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||x.ledgerType===typeFilter)&&(paymentFilter==='all'||effectivePaymentMethod(x)===paymentFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.bankPayment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
+const isRefundEntry=x=>x.refundEntry===true;
+const refundEntries=()=>{
+ const purchases=new Map(state.records.filter(x=>x.direction==='expense').map(x=>[x.id,x]));
+ return (state.refunds||[]).map(refund=>{
+  const purchase=refund.status==='matched'?purchases.get(refund.refundOf):null;
+  const scope=purchase&&!['review','excluded','transfer'].includes(purchase.scope)?purchase.scope:'refund-unassigned';
+  return {...refund,id:'refund-entry:'+refund.id,refundId:refund.id,refundEntry:true,refundStatus:refund.status,
+   direction:'expense',amount:-n(refund.amount),status:refund.status==='excluded'?'excluded':'confirmed',
+   scope,ledgerType:purchase?.ledgerType||'refund',category:'환불',
+   subcategory:purchase?((LABEL[scope]||'사용처 미지정')+' · '+(purchase.category||'원결제 연결됨')):'원결제 미연결',
+   payment:refund.payment||purchase?.payment||'',originalAmount:purchase?.amount??null};
+ });
+};
+const ledgerEntries=()=>[...state.records.filter(x=>x.direction==='expense'),...refundEntries()];
+const relevant=()=>ledgerEntries().filter(x=>x.status!=='excluded');
+const filtered=(list)=>list.filter(x=>(period==='all'||x.date.slice(0,7)===period)&&(scopeFilter==='all'||x.scope===scopeFilter)&&(typeFilter==='all'||(typeFilter==='refund'?isRefundEntry(x):x.ledgerType===typeFilter))&&(paymentFilter==='all'||effectivePaymentMethod(x)===paymentFilter)&&(q===''||[x.merchant,x.category,x.subcategory,x.note,x.payment,x.bankPayment,x.date].join(' ').toLocaleLowerCase('ko').includes(q.toLocaleLowerCase('ko'))));
 const monthlyOptions=()=>{
  const months=new Set([...state.records.map(x=>x.date.slice(0,7)),...(state.refunds||[]).map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))].filter(x=>/^20\d\d-\d\d$/.test(x)));
  for(let m=1;m<=12;m++)months.add(now().slice(0,4)+'-'+String(m).padStart(2,'0'));
@@ -200,13 +214,14 @@ const monthlyOptions=()=>{
 };
 const statusBadge=x=>x.status==='review'?'<span class="tag tag-warn">분류 대기</span>':x.status==='excluded'?'<span class="tag tag-muted">제외됨</span>':'<span class="tag tag-ok">분류 완료</span>';
 const scopeBadge=x=>'<span class="tag tag-'+E(x.scope)+'">'+E(LABEL[x.scope]||'미분류')+'</span>';
-/* Refunds offset the purchase rather than becoming income. Original charges
-   and credits are preserved separately to show FX gain/loss. */
+/* Ledger totals use each charge/refund's own date. Purchase links only help
+   reconciliation; the net purchase amount is informational, never deducted twice. */
 const linkedRefunds=row=>(state.refunds||[]).filter(r=>r.status==='matched'&&r.refundOf===row.id);
 const refundedAmount=row=>linkedRefunds(row).reduce((v,r)=>v+n(r.amount),0);
 const netExpenseAmount=row=>n(row.amount)-refundedAmount(row);
-const sum=list=>list.reduce((v,x)=>v+(x.direction==='expense'?netExpenseAmount(x):n(x.amount)),0);
-const reviewableExpense=x=>x.status==='review'&&!(refundedAmount(x)===n(x.amount)&&n(x.amount)>0);
+const sum=list=>list.reduce((v,x)=>v+n(x.amount),0);
+const reviewableExpense=x=>!isRefundEntry(x)&&x.status==='review';
+const countedExpense=x=>x.status==='confirmed'&&x.scope!=='review'&&x.scope!=='excluded';
 function setStatus(msg,kind='local'){
  const el=$('#save-indicator');if(el){el.textContent=msg;el.closest('.top-privacy')?.setAttribute('data-status',kind)}
 }
@@ -225,8 +240,8 @@ function topFilters(){
  const methods=paymentFilterChoices();
  const options=methods.map(([label,count])=>'<option value="'+E(label)+'"'+(paymentFilter===label?' selected':'')+'>'+E(label)+' ('+count+'건)</option>').join('');
  return '<div class="filter-row"><select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>'+
- '<select id="scope-filter" aria-label="사용처"><option value="all">모든 사용처</option>'+Object.entries(LABEL).filter(([k])=>k!=='transfer'&&k!=='excluded').map(([k,v])=>'<option value="'+k+'"'+(scopeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select>'+
- '<select id="type-filter" aria-label="장부 유형"><option value="all">모든 지출 종류</option>'+Object.entries(GROUP).map(([k,v])=>'<option value="'+k+'"'+(typeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'</select>'+
+ '<select id="scope-filter" aria-label="사용처"><option value="all">모든 사용처</option>'+Object.entries(LABEL).filter(([k])=>k!=='transfer'&&k!=='excluded').map(([k,v])=>'<option value="'+k+'"'+(scopeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'<option value="refund-unassigned"'+(scopeFilter==='refund-unassigned'?' selected':'')+'>환불 · 사용처 미지정</option></select>'+
+ '<select id="type-filter" aria-label="장부 유형"><option value="all">모든 지출 종류</option>'+Object.entries(GROUP).map(([k,v])=>'<option value="'+k+'"'+(typeFilter===k?' selected':'')+'>'+v+'</option>').join('')+'<option value="refund"'+(typeFilter==='refund'?' selected':'')+'>환불</option></select>'+
  '<select id="payment-filter" class="payment-filter" aria-label="결제수단별 조회"><option value="all">모든 결제수단</option>'+options+'</select>'+
  '<input id="query-filter" class="search" type="search" autocomplete="off" placeholder="거래처 · 메모 · 결제수단 검색" value="'+E(q)+'"></div>';
 }
@@ -258,8 +273,10 @@ function dashboard(){
  '<section class="surface welcome"><span class="welcome-mark">₩</span><h2>오늘의 거래부터 가볍게 시작하세요</h2><p>날짜 · 금액 · 거래처만 입력하면 저장됩니다.<br>기존 장부가 있다면 JSON 백업이나 은행 엑셀을 가져오세요.</p><div class="quick-actions"><button class="btn primary" id="dashboard-new-record">＋ 첫 거래 입력</button><button class="btn" data-nav="import">기존 자료 가져오기</button></div></section>'+
  '<div class="start-guide"><article><b>01 · 입력</b><p>한 건은 간편 입력, 여러 건은 표에 붙여넣기</p><button class="row-edit" data-nav="sheet">여러 건 입력 →</button></article><article><b>02 · 관리</b><p>개인·편의점·풍월관을 나누고 환불까지 대조</p><button class="row-edit" data-nav="records">거래내역 →</button></article><article><b>03 · 보관</b><p>이 기기에 자동 보관하고 서버 연결 후 기기 간 동기화</p><button class="row-edit" data-nav="settings">저장 상태 확인 →</button></article></div>';
  const all=relevant().filter(x=>period==='all'||x.date.slice(0,7)===period);
- const confirmed=all.filter(x=>x.status==='confirmed'&&x.scope!=='review'&&x.scope!=='excluded');
- const pending=all.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
+ const confirmed=all.filter(countedExpense);
+ const pending=all.filter(x=>reviewableExpense(x)||!isRefundEntry(x)&&x.scope==='review'&&n(x.amount)!==0);
+ const purchases=confirmed.filter(x=>!isRefundEntry(x)),refunds=confirmed.filter(isRefundEntry);
+ const unassignedRefunds=refunds.filter(x=>x.scope==='refund-unassigned');
  const fin=financials(period);
  const total=fin.expenses,personal=confirmed.filter(x=>x.scope==='personal');
  const business=confirmed.filter(x=>x.scope==='business'),windmoon=confirmed.filter(x=>x.scope==='windmoon');
@@ -271,7 +288,7 @@ function dashboard(){
    entry.amount+=amount;entry.count++;map.set(key,entry);
  };
  for(const x of confirmed){
-   const amount=netExpenseAmount(x);
+   const amount=n(x.amount);
    let payment=isOnnuri(x)?'온누리상품권':String(x.payment||'').trim();
    if((!payment||/^(?:카드|체크카드|신용카드|계좌이체|자동이체)$/i.test(payment))&&x.bankPayment)
      payment=String(x.bankPayment).trim();
@@ -287,22 +304,21 @@ function dashboard(){
  const fixedAmount=sum(confirmed.filter(x=>x.ledgerType==='fixed'));
  const consumptionAmount=sum(confirmed.filter(x=>x.ledgerType==='consumption'));
  const latest=all.slice().sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||''))).slice(0,8);
- const scopes=[
-   {name:'개인',amount:sum(personal),count:personal.length,color:'#477fb4'},
-   {name:'편의점',amount:sum(business),count:business.length,color:'#138a74'},
-   {name:'풍월관',amount:sum(windmoon),count:windmoon.length,color:'#8972c7'},
-   {name:'기타',amount:sum(other),count:other.length,color:'#9caeb3'}
- ];
+ const scopeTotal=sum(purchases);
+ const scopes=[['personal','개인','#477fb4'],['business','편의점','#138a74'],['windmoon','풍월관','#8972c7'],['other','기타','#9caeb3']].map(([scope,name,color])=>{
+   const rows=purchases.filter(x=>scope==='other'?!['personal','business','windmoon'].includes(x.scope):x.scope===scope);
+   return {name,amount:sum(rows),count:rows.length,color};
+ });
  let cursor=0;
- const gradient=total>0?scopes.filter(x=>x.amount>0).map(row=>{
-   const start=cursor;cursor+=row.amount/total*100;
+ const gradient=scopeTotal>0?scopes.filter(x=>x.amount>0).map(row=>{
+   const start=cursor;cursor+=row.amount/scopeTotal*100;
    return row.color+' '+start.toFixed(3)+'% '+Math.min(100,cursor).toFixed(3)+'%';
  }).join(','):'#e7eeeb 0% 100%';
  const scopeChart='<div class="md-scope-chart"><div class="md-donut" role="img" aria-label="지출 사용처 구성비" style="background:conic-gradient('+gradient+')">'+
-   '<div class="md-donut-inner"><span>확정 지출</span><strong>'+dashWonShort(total)+'</strong></div></div>'+
+   '<div class="md-donut-inner"><span>환불 차감 전</span><strong>'+dashWonShort(scopeTotal)+'</strong></div></div>'+
    '<div class="md-donut-legend">'+scopes.map(row=>'<div><i style="background:'+row.color+'"></i><span>'+E(row.name)+'</span><strong>'+dashWonShort(row.amount)+'</strong>'+
-     '<small>'+(!total?'0':(row.amount/total*100).toFixed(1))+'% · '+row.count+'건</small></div>').join('')+'</div></div>';
- const trendSources=state.records.filter(x=>/^\d{4}-\d{2}/.test(String(x.date||''))&&x.status!=='excluded'&&
+     '<small>'+(!scopeTotal?'0':(row.amount/scopeTotal*100).toFixed(1))+'% · '+row.count+'건</small></div>').join('')+'</div></div>';
+ const trendSources=[...state.records,...refundEntries()].filter(x=>/^\d{4}-\d{2}/.test(String(x.date||''))&&x.status!=='excluded'&&
    (x.direction==='expense'||x.direction==='income'&&['가게 매출','토토 수수료'].includes(x.category)));
  const knownMonths=[...new Set([...trendSources.map(x=>x.date.slice(0,7)),...(state.dailyLotto||[]).map(x=>x.date.slice(0,7))])].sort();
  const endMonth=period==='all'?(knownMonths.at(-1)||ym()):period;
@@ -313,19 +329,19 @@ function dashboard(){
  const trendEntries=trendMonths.map(month=>{
    const value=financials(month);return {month,income:value.income,expense:value.expenses,balance:value.balance};
  });
- const trendMax=Math.max(1,...trendEntries.flatMap(x=>[x.income,x.expense]));
- const monthlyChart='<div class="md-trend-legend"><span><i class="income"></i>수입</span><span><i class="expense"></i>확정 지출</span><small>단위: 원 · 최근 12개월</small></div>'+
+ const trendMax=Math.max(1,...trendEntries.flatMap(x=>[x.income,Math.abs(x.expense)]));
+ const monthlyChart='<div class="md-trend-legend"><span><i class="income"></i>수입</span><span><i class="expense"></i>순지출</span><small>단위: 원 · 최근 12개월</small></div>'+
    '<div class="md-trend-scroll"><div class="md-trend-grid">'+trendEntries.map(row=>{
      const incomeH=row.income>0?Math.max(2,row.income/trendMax*100):0;
-     const expenseH=row.expense>0?Math.max(2,row.expense/trendMax*100):0;
+     const expenseH=row.expense?Math.max(2,Math.abs(row.expense)/trendMax*100):0;
      const label=row.month.slice(2,4)+'/'+row.month.slice(5,7);
      return '<div class="md-month-column" title="'+E(row.month)+' · 수입 '+E(won(row.income))+' / 지출 '+E(won(row.expense))+' / 차이 '+E(won(row.balance))+'">'+
-       '<div class="md-month-value">'+(row.income||row.expense?dashWonShort(Math.max(row.income,row.expense)):'')+'</div>'+
-       '<div class="md-month-pair"><i class="income" style="height:'+incomeH.toFixed(2)+'%"></i><i class="expense" style="height:'+expenseH.toFixed(2)+'%"></i></div>'+
+       '<div class="md-month-value">'+(row.income||row.expense?dashWonShort(Math.abs(row.expense)>row.income?row.expense:row.income):'')+'</div>'+
+       '<div class="md-month-pair"><i class="income" style="height:'+incomeH.toFixed(2)+'%"></i><i class="expense'+(row.expense<0?' refund':'')+'" style="height:'+expenseH.toFixed(2)+'%"></i></div>'+
        '<span class="md-month-label">'+label+'</span><small class="'+(row.balance<0?'negative':'')+'">'+
        (row.income||row.expense?dashWonShort(row.balance):'—')+'</small></div>';
    }).join('')+'</div></div>'+
-   '<p class="md-chart-footnote">수입은 편의점 월 총매출 + 토토 확정 수수료, 지출은 분류 완료 건만 집계합니다. 아래 월별 차이는 순이익이 아닌 장부상 수지입니다.</p>';
+   '<p class="md-chart-footnote">순지출은 분류 완료 결제액에서 해당 월의 환불을 차감합니다. 환불이 더 큰 달은 음수이며 녹색 막대로 표시합니다. 수입은 편의점 월 총매출 + 토토 확정 수수료입니다.</p>';
  const relevantMonths=[...new Set(state.records.filter(x=>x.direction==='income'&&x.status!=='excluded'&&x.category==='가게 매출').map(x=>x.date.slice(0,7)))].sort();
  const posMonth=period==='all'?(relevantMonths.at(-1)||null):period;
  const posGross=posMonth?revenueTotal('store',posMonth):0;
@@ -333,7 +349,7 @@ function dashboard(){
  const profit=posMonth?storedProfit(posMonth):null;
  const lottoDaily=posMonth?monthlyLottoDays(posMonth):[];
  const pendingShare=all.length?pending.length/all.length*100:0;
- const largest=confirmed.reduce((best,x)=>!best||netExpenseAmount(x)>netExpenseAmount(best)?x:best,null);
+ const largest=purchases.reduce((best,x)=>!best||n(x.amount)>n(best.amount)?x:best,null);
  const paymentButtons='<div class="md-segment">'+
    ['amount','count'].map(mode=>'<button type="button" data-dashboard-pay="'+mode+'" aria-pressed="'+(dashboardPayMetric===mode)+'" class="'+(dashboardPayMetric===mode?'active':'')+'">'+(mode==='amount'?'금액':'건수')+'</button>').join('')+'</div>';
  const paymentRank=dashRankList(payments,dashboardPayAll?1000:8,dashboardPayMetric);
@@ -341,22 +357,23 @@ function dashboard(){
    '개인 · 편의점 · 풍월관의 수입과 지출을 한눈에 확인하세요.',
    '<div class="md-period-control"><label for="period-filter">조회 기간</label><select id="period-filter">'+monthlyOptions()+'</select></div>');
  return head+'<div class="quick-actions"><button class="btn primary" id="dashboard-new-record">＋ 거래 입력</button><button class="btn" data-nav="sheet">여러 건 한 번에 입력</button><button class="btn" data-nav="import">파일 가져오기</button></div>'+
- '<div class="md-status-strip"><span>확정 지출 <b>'+confirmed.length.toLocaleString('ko-KR')+'건</b></span>'+
- '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+ '<span>카드 환불 <b>'+(state.refunds||[]).filter(x=>x.status==='matched'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b> 연결 · 확인 필요 <b>'+(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period)).length+'건</b></span>'+
+ '<div class="md-status-strip"><span>확정 결제 <b>'+purchases.length.toLocaleString('ko-KR')+'건</b></span>'+
+ '<span>미분류 <b>'+pending.length.toLocaleString('ko-KR')+'건</b> ('+pendingShare.toFixed(1)+'%)</span>'+ '<span>환불 <b>'+refunds.length+'건</b> 반영 · 원결제 미연결 <b>'+refunds.filter(x=>x.refundStatus!=='matched').length+'건</b></span>'+
  '<span>기간 <b>'+(period==='all'?'전체 기간':E(period))+'</b></span>'+
  '<button type="button" data-nav="review">미분류 검토 →</button></div>'+
  '<div class="md-kpi-grid primary-kpis">'+statCard('확정 수입',fin.income,'편의점 '+dashWonShort(storeIncome)+' · 토토 '+dashWonShort(lottoIncome),'teal','↗')+
- statCard('확정 지출',total,confirmed.length.toLocaleString('ko-KR')+'건 · 1건 평균 '+dashWonShort(confirmed.length?total/confirmed.length:0),'blue','↘')+
- statCard('장부상 수지',fin.balance,'확정 수입 − 확정 지출 · 순이익 아님',fin.balance<0?'amber':'teal','≋')+'</div><div class="md-kpi-grid detail-kpis">'+
+ statCard('순지출',total,'결제 '+dashWonShort(fin.grossExpenses)+' − 환불 '+dashWonShort(fin.refunds),'blue','↘')+
+ statCard('장부상 수지',fin.balance,'확정 수입 − 순지출 · 순이익 아님',fin.balance<0?'amber':'teal','≋')+'</div><div class="md-kpi-grid detail-kpis">'+
  statCard('개인 지출',sum(personal),personal.length.toLocaleString('ko-KR')+'건','blue','◉')+
  statCard('편의점 지출',sum(business),business.length.toLocaleString('ko-KR')+'건','teal','▤')+
  statCard('풍월관 지출',sum(windmoon),windmoon.length.toLocaleString('ko-KR')+'건','violet','◈')+
  statCard('온누리 사용액',onnuriAmount,onnuri.length.toLocaleString('ko-KR')+'건 · 충전액 제외','teal','₩')+
  statCard('미분류 대기액',sum(pending),pending.length.toLocaleString('ko-KR')+'건 · 확정 수지 제외','amber','?')+'</div>'+
+ (refunds.length?'<div class="notice compact refund-period-note"><b>환불 '+refunds.length+'건 · '+won(fin.refunds)+' 차감 반영</b><p>환불은 실제 환불일에 반영합니다. 원결제 연결은 대조용이며 추가로 차감하지 않습니다.'+(unassignedRefunds.length?' 사용처 미지정 환불 '+unassignedRefunds.length+'건은 전체 순지출에 반영됩니다.':'')+'</p></div>':'')+
  '<div class="md-dashboard-grid"><section class="surface md-panel md-span-2"><div class="surface-head"><div><h2>월별 수입 · 지출 흐름</h2><p>'+
    (period==='all'?'전체 합계와 별개로 최근 12개월을 표시합니다.':'선택월까지의 12개월을 표시합니다.')+
    '</p></div><button type="button" class="btn subtle" data-nav="sales">월매출 관리</button></div>'+monthlyChart+'</section>'+
- '<section class="surface md-panel"><div class="surface-head"><div><h2>사용처별 지출 비중</h2><p>개인 · 편의점 · 풍월관은 서로 합산하지 않습니다.</p></div></div>'+
+ '<section class="surface md-panel"><div class="surface-head"><div><h2>사용처별 결제 구성</h2><p>환불 차감 전 결제액 기준입니다.</p></div></div>'+
    scopeChart+'</section>'+
  '<section class="surface md-panel"><div class="surface-head"><div><h2>결제수단별 실제 사용</h2><p>온누리는 사용액만 계산하며, 동일 카드의 다른 표기는 합산합니다.</p></div>'+paymentButtons+'</div>'+
    paymentRank+
@@ -372,25 +389,33 @@ function dashboard(){
  '<div><span>토토 월 확정 수수료</span><strong>'+won(posLotto)+'</strong></div>'+
  '<div><span>편의점 월 순이익 (참고)</span><strong>'+(profit===null?'미입력':won(profit))+'</strong></div>'+
  '<div><span>토토 일별 기록</span><strong>'+lottoDaily.length+'일</strong></div>'+
- '<div><span>확정 지출 평균</span><strong>'+dashWonShort(confirmed.length?total/confirmed.length:0)+'</strong></div>'+
- '<div><span>최대 단일 지출</span><strong>'+(largest?dashWonShort(netExpenseAmount(largest)):'—')+'</strong></div></div>'+
+ '<div><span>결제 1건 평균</span><strong>'+dashWonShort(purchases.length?fin.grossExpenses/purchases.length:0)+'</strong></div>'+
+ '<div><span>최대 단일 결제</span><strong>'+(largest?dashWonShort(largest.amount):'—')+'</strong></div></div>'+
  (largest?'<p class="md-check-detail">최대 지출: '+E(largest.merchant||'거래처 미기재')+' · '+E(largest.date)+'</p>':'')+
  '<button type="button" class="md-review-link" data-nav="review">미분류 '+pending.length+'건 바로 확인 →</button></section></div>'+
  '<section class="surface md-panel md-recent"><div class="surface-head"><div><h2>최근 거래</h2><p>선택한 기간 내 최근 8건 · 미분류 포함</p></div><button type="button" class="btn subtle" data-nav="records">전체 거래 보기</button></div>'+transactionTable(latest,true)+'</section>'+
  '<div class="md-disclosure">장부 지표는 입력 자료 기준이며 실제 은행 잔액·세후 순이익을 뜻하지 않습니다. 은행 간 이체·카드대금·온누리 충전액은 지출에 중복 계산하지 않으며 미분류 거래는 별도 표시합니다.</div>';
 }
 function transactionTable(items,compact=false){
+ const rows=items.map(x=>{
+  const refund=isRefundEntry(x),amount=n(x.amount),linked=refund?0:refundedAmount(x);
+  const classification=refund?'<span class="tag tag-refund">환불</span>':x.status==='excluded'?statusBadge(x):scopeBadge(x);
+  const details=refund?(x.refundStatus==='matched'?'원결제 연결됨 · 환불일 반영':'원결제 미연결 · 환불일 반영'):
+    linked?'연결 환불 '+won(linked)+' · 환불일에 별도 반영':'';
+  const management=refund?'<button class="row-edit" data-manage-refund="'+E(x.refundId)+'">연결 관리</button>':
+    (x.status==='excluded'?'<button class="row-edit" data-restore-record="'+E(x.id)+'">복원</button> ':'')+'<button class="row-edit" data-edit="'+E(x.id)+'">수정</button>';
+  return '<tr'+(refund?' class="refund-ledger-row"':'')+'><td class="date-col">'+E(x.date)+'<small>'+E(x.time||'')+'</small></td>'+
+   '<td class="merchant-col"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><small>'+E(refund?'환불 · '+(x.sourceSheet||SOURCE[x.source]||'직접 입력'):(x.source==='bank'?'뱅크샐러드':x.sourceSheet||SOURCE[x.source]||'직접 입력'))+'</small></td>'+
+   '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
+    (!refund&&registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
+    (!refund&&onnuriLinkedCard(x)?'<small>온누리 연동 카드 (사용자 확인): '+E(onnuriLinkedCard(x))+'</small>':'')+
+    (!refund&&x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
+   '<td class="classification-col">'+classification+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
+    (!refund&&x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
+   '<td class="right amount-col">'+(amount<0?'+':'−')+won(Math.abs(amount))+(details?'<small>'+E(x.status==='excluded'?'집계 제외':details)+'</small>':'')+'</td><td class="row-actions">'+management+'</td></tr>';
+ }).join('');
  return '<div class="table-scroll"><table class="records-table expense-table'+(compact?' compact':'')+'"><thead><tr><th>날짜 · 시간</th><th>거래처</th><th>결제 수단</th><th>분류</th><th class="right">금액</th><th>관리</th></tr></thead><tbody>'+
- (items.length?items.map(x=>'<tr><td class="date-col">'+E(x.date)+'<small>'+E(x.time||'')+'</small></td>'+
- '<td class="merchant-col"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><small>'+E((x.source==='bank'?'뱅크샐러드':x.sourceSheet||SOURCE[x.source]||'직접 입력'))+'</small></td>'+
- '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
-  (registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
-  (onnuriLinkedCard(x)?'<small>온누리 연동 카드 (사용자 확인): '+E(onnuriLinkedCard(x))+'</small>':'')+
-  (x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
- '<td class="classification-col">'+(x.status==='excluded'?statusBadge(x):scopeBadge(x))+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
- (x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
- '<td class="right amount-col">'+(netExpenseAmount(x)<0?'+': '−')+won(Math.abs(netExpenseAmount(x)))+(refundedAmount(x)?'<small>원결제 '+won(x.amount)+' · 환불 '+won(refundedAmount(x))+'</small>':'')+'</td><td class="row-actions">'+(x.status==='excluded'?'<button class="row-edit" data-restore-record="'+E(x.id)+'">복원</button> ':'')+'<button class="row-edit" data-edit="'+E(x.id)+'">수정</button></td></tr>').join(''):
- '<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
+ (rows||'<tr><td colspan="6"><div class="empty">표시할 거래가 없습니다.</div></td></tr>')+'</tbody></table></div>';
 }
 function reviewCard(x,i){
  const online=x.category==='온라인쇼핑'||/온라인 쇼핑/.test(x.reason||'');
@@ -413,7 +438,7 @@ function reviewPage(){
  const pendingRefunds=(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period));
  return pageIntro('REVIEW INBOX','분류가 필요한 거래','애매한 거래를 임의 분류하지 않았습니다. 개인·편의점·풍월관 버튼 중 하나를 누르면 즉시 해당 장부로 이동합니다.',
  '<select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>')+
- '<div class="review-summary"><div><strong>'+list.length.toLocaleString('ko-KR')+'건</strong><span>분류 대기</span></div><div><strong>'+pendingRefunds.length.toLocaleString('ko-KR')+'건</strong><span>원결제 확인 필요한 환불</span></div><div><strong>'+won(sum(list))+'</strong><span>미반영 검토 금액</span></div></div>'+
+ '<div class="review-summary"><div><strong>'+list.length.toLocaleString('ko-KR')+'건</strong><span>분류 대기</span></div><div><strong>'+pendingRefunds.length.toLocaleString('ko-KR')+'건</strong><span>원결제 미연결 환불 · 금액 반영됨</span></div><div><strong>'+won(sum(list))+'</strong><span>미반영 검토 금액</span></div></div>'+
  '<div class="review-header"><div><h2>빠른 분류</h2><p>거래처와 결제수단을 보고 바로 선택하세요. 확정 후에도 거래내역에서 수정할 수 있습니다.</p></div><div class="shortcuts">개인 <kbd>1</kbd> 편의점 <kbd>2</kbd> 풍월관 <kbd>3</kbd></div></div>'+
  '<div class="review-list">'+(list.length?list.slice(reviewOffset,reviewOffset+35).map((x,i)=>reviewCard(x,reviewOffset+i)).join(''):'<div class="empty spacious"><b>지출 분류 대기 항목이 없습니다.</b><p>'+(pendingRefunds.length?'아래 확인이 필요한 카드 환불을 검토하세요.':'다음 뱅크샐러드 파일을 가져오면 새 검토 항목이 나타납니다.')+'</p></div>')+'</div>'+
  (list.length>35?'<div class="pager"><button class="btn" data-review-page="prev" '+(reviewOffset===0?'disabled':'')+'>이전</button><span>'+(reviewOffset+1)+'–'+Math.min(reviewOffset+35,list.length)+' / '+list.length+'</span><button class="btn" data-review-page="next" '+(reviewOffset+35>=list.length?'disabled':'')+'>다음</button></div>':'')+refundAuditPanel(true);
@@ -639,7 +664,7 @@ function effectivePaymentMethod(x){
 }
 function paymentFilterChoices(){
  const counts=new Map();
- for(const x of state.records||[]){
+ for(const x of ledgerEntries()){
    if(x.direction!=='expense'||(page==='records'&&recordsMode==='excluded'?x.status!=='excluded':x.status==='excluded'))continue;
    const method=effectivePaymentMethod(x);
    counts.set(method,(counts.get(method)||0)+1);
@@ -1037,18 +1062,18 @@ function sheetSelectChange(el){
 }
 
 function refundAuditPanel(onlyReview=false){
+ const visibleRefunds=new Set(filtered(refundEntries()).map(x=>x.refundId));
  const source=(state.refunds||[]).filter(r=>(!onlyReview||r.status==='review')&&
    (onlyReview||recordsMode==='review'?r.status==='review':recordsMode==='excluded'?r.status==='excluded':r.status!=='excluded')&&
-   (period==='all'||String(r.date||'').slice(0,7)===period)&&
-   (paymentFilter==='all'||paymentLabelKey(r.payment)===paymentFilter)).sort((a,b)=>b.date.localeCompare(a.date));
+   visibleRefunds.has(r.id)).sort((a,b)=>b.date.localeCompare(a.date));
  if(!source.length)return '';
  const matched=source.filter(r=>r.status==='matched'),unlinked=source.filter(r=>r.status==='review');
  const byId=new Map(state.records.map(x=>[x.id,x]));
  return '<section class="surface ledger-refund-section"><div class="surface-head"><div><h2>'+
-   (onlyReview?'확인이 필요한 카드 환불':'카드 환불 · 취소 대조 내역')+'</h2>'+
-   '<p>양수 카드거래를 원결제에 연결해 차감합니다. 환율 차액도 원결제 순지출에 반영됩니다.</p></div></div>'+
-   '<div class="ledger-refund-metrics"><div><span>확인된 환불</span><strong>'+matched.length+'건 · '+won(sum(matched))+'</strong></div>'+
-   '<div><span>원결제 확인 필요</span><strong>'+unlinked.length+'건 · '+won(sum(unlinked))+'</strong></div></div>'+
+   (onlyReview?'원결제 미연결 환불':'환불 · 취소 연결 관리')+'</h2>'+
+   '<p>집계 제외한 건을 빼고 모든 환불은 환불일의 순지출에서 이미 차감됩니다. 원결제 연결은 대조용이며 추가로 차감하지 않습니다.</p></div></div>'+
+   '<div class="ledger-refund-metrics"><div><span>원결제 연결됨</span><strong>'+matched.length+'건 · '+won(sum(matched))+'</strong></div>'+
+   '<div><span>원결제 미연결 · 금액 반영됨</span><strong>'+unlinked.length+'건 · '+won(sum(unlinked))+'</strong></div></div>'+
    '<div class="table-scroll"><table class="records-table ledger-refund-table"><thead><tr><th>환불일</th><th>거래처</th>'+
    '<th>결제수단</th><th class="right">환불 금액</th><th>원결제 연결</th><th>관리</th></tr></thead><tbody>'+
    source.map(r=>{
@@ -1057,21 +1082,21 @@ function refundAuditPanel(onlyReview=false){
        '<td>'+E(r.payment)+'</td><td class="right ledger-refund-positive">+'+won(r.amount)+'</td>'+
        '<td>'+(r.status==='matched'&&original?
          '<button type="button" class="row-edit" data-edit="'+E(original.id)+'">'+E(original.date)+' · 원결제 '+won(original.amount)+'</button>':
-         '<span class="tag '+(r.status==='excluded'?'tag-muted':'tag-warn')+'">'+(r.status==='excluded'?'집계 제외':'대응 결제 확인 필요')+'</span>')+'</td><td><button class="row-edit" data-manage-refund="'+E(r.id)+'">연결 관리</button></td></tr>';
+         '<span class="tag '+(r.status==='excluded'?'tag-muted':'tag-warn')+'">'+(r.status==='excluded'?'집계 제외':'원결제 미연결 · 금액 반영됨')+'</span>')+'</td><td><button class="row-edit" data-manage-refund="'+E(r.id)+'">연결 관리</button></td></tr>';
    }).join('')+'</tbody></table></div></section>';
 }
 function recordsPage(){
- const eligible=filtered(state.records.filter(x=>x.direction==='expense'));
+ const eligible=filtered(ledgerEntries());
  const counts={active:eligible.filter(x=>x.status!=='excluded').length,review:eligible.filter(reviewableExpense).length,excluded:eligible.filter(x=>x.status==='excluded').length};
  const entries=eligible.filter(x=>recordsMode==='excluded'?x.status==='excluded':recordsMode==='review'?reviewableExpense(x):x.status!=='excluded').sort((a,b)=>b.date.localeCompare(a.date)||String(b.time||'').localeCompare(String(a.time||'')));
  offset=Math.min(offset,Math.max(0,Math.ceil(entries.length/80)-1)*80);
- const confirmed=entries.filter(x=>x.status==='confirmed'&&x.scope!=='review'),pending=entries.filter(x=>reviewableExpense(x)||x.scope==='review'&&netExpenseAmount(x)!==0);
+ const confirmed=entries.filter(countedExpense),pending=entries.filter(x=>reviewableExpense(x)||!isRefundEntry(x)&&x.scope==='review'&&n(x.amount)!==0);
  const group=new Map(),merchant=new Map();
  if(paymentFilter!=='all')for(const x of entries){
    const name=[x.category||'미분류',x.subcategory||''].filter(Boolean).join(' / ');
-   const obj=group.get(name)||{amount:0,count:0};obj.amount+=netExpenseAmount(x);obj.count++;group.set(name,obj);
+   const obj=group.get(name)||{amount:0,count:0};obj.amount+=n(x.amount);obj.count++;group.set(name,obj);
    const shop=String(x.merchant||'거래처 미기재').trim()||'거래처 미기재';
-   const prior=merchant.get(shop)||{amount:0,count:0};prior.amount+=netExpenseAmount(x);prior.count++;merchant.set(shop,prior);
+   const prior=merchant.get(shop)||{amount:0,count:0};prior.amount+=n(x.amount);prior.count++;merchant.set(shop,prior);
  }
  const paymentBreakdown=paymentFilter==='all'?'':(()=>{
    const fmt=map=>[...map.entries()].sort((a,b)=>b[1].amount-a[1].amount).slice(0,5).map(([name,x])=>
@@ -1083,11 +1108,11 @@ function recordsPage(){
      '<div class="payment-filter-breakdown-cols"><div><h3>어디에 많이 썼나 · 지출항목</h3>'+fmt(group)+'</div>'+
      '<div><h3>어디에 많이 썼나 · 거래처</h3>'+fmt(merchant)+'</div></div></div>';
  })();
- return pageIntro('TRANSACTIONS','전체 거래내역','은행에서 가져온 거래와 원본 시트의 현금 지출을 함께 관리합니다. 결제수단으로 카드·현금/송금·온누리 등을 구분해 볼 수 있습니다.',
+ return pageIntro('TRANSACTIONS','전체 거래내역','결제와 환불을 실제 발생일 순서로 표시합니다. 환불은 원결제 연결 여부와 관계없이 해당 일자의 순지출에서 차감됩니다.',
  '<button class="btn primary" id="new-record">＋ 직접 입력</button>')+
- '<section class="surface records-surface">'+topFilters()+'<div class="record-modes" aria-label="거래 상태">'+[['active','전체 지출'],['review','미분류'],['excluded','제외 내역']].map(([mode,label])=>'<button class="'+(recordsMode===mode?'selected':'')+'" aria-pressed="'+(recordsMode===mode)+'" data-record-mode="'+mode+'">'+label+' <span>'+counts[mode]+'</span></button>').join('')+'</div>'+
+ '<section class="surface records-surface">'+topFilters()+'<div class="record-modes" aria-label="거래 상태">'+[['active','전체 지출 · 환불'],['review','미분류'],['excluded','제외 내역']].map(([mode,label])=>'<button class="'+(recordsMode===mode?'selected':'')+'" aria-pressed="'+(recordsMode===mode)+'" data-record-mode="'+mode+'">'+label+' <span>'+counts[mode]+'</span></button>').join('')+'</div>'+
  '<div class="table-topline"><span>조회 결과 <b>'+entries.length.toLocaleString('ko-KR')+'건</b></span>'+
- '<strong>확정 지출 '+won(sum(confirmed))+(pending.length?' · 미분류 '+won(sum(pending)):'')+'</strong></div>'+
+ '<strong>순지출 '+won(sum(confirmed))+(pending.length?' · 미분류 '+won(sum(pending)):'')+'</strong></div>'+
  paymentBreakdown+transactionTable(entries.slice(offset,offset+80))+
  '<div class="pager"><button class="btn" data-page-step="-1" '+(offset===0?'disabled':'')+'>이전</button><span>'+(entries.length?offset+1:0)+'–'+Math.min(offset+80,entries.length)+' / '+entries.length+'</span><button class="btn" data-page-step="1" '+(offset+80>=entries.length?'disabled':'')+'>다음</button></div></section>'+refundAuditPanel();
 }
@@ -1095,8 +1120,8 @@ function openRefund(id){
  const row=state.refunds.find(x=>x.id===id);if(!row)return;
  activeRefund=id;
  $('#refund-editor-body').innerHTML='<div class="refund-summary"><div><span>'+E(row.date)+' · '+E(row.payment||'결제수단 미기재')+'</span><h3>'+E(row.merchant||'거래처 미기재')+'</h3></div><strong>+'+won(row.amount)+'</strong></div>'+
- '<div class="refund-body"><p>환불받은 원래 결제를 선택하세요. 연결한 금액은 원결제의 지출에서 차감됩니다.</p><label class="visually-hidden" for="refund-query">원결제 검색</label><input type="search" id="refund-query" placeholder="거래처 · 날짜 · 금액으로 검색" autocomplete="off"><div id="refund-candidates"></div></div>'+
- '<div class="refund-actions">'+(row.status==='matched'?'<button class="btn" data-refund-action="unlink">연결 해제</button>':'')+'<button class="btn" data-refund-action="'+(row.status==='excluded'?'restore':'exclude')+'">'+(row.status==='excluded'?'검토 대상으로 복원':'환불 집계 제외')+'</button><button class="btn" id="close-refund-secondary">닫기</button></div>';
+ '<div class="refund-body"><p>환불액은 환불일의 순지출에서 이미 차감됩니다. 원결제 연결은 대조용이며 연결·해제해도 전체 순지출을 추가로 바꾸지 않습니다.</p><label class="visually-hidden" for="refund-query">원결제 검색</label><input type="search" id="refund-query" placeholder="거래처 · 날짜 · 금액으로 검색" autocomplete="off"><div id="refund-candidates"></div></div>'+
+ '<div class="refund-actions">'+(row.status==='matched'?'<button class="btn" data-refund-action="unlink">연결 해제</button>':'')+'<button class="btn" data-refund-action="'+(row.status==='excluded'?'restore':'exclude')+'">'+(row.status==='excluded'?'환불 집계 복원':'환불 집계 제외')+'</button><button class="btn" id="close-refund-secondary">닫기</button></div>';
  renderRefundCandidates();$('#refund-editor').showModal();
 }
 function renderRefundCandidates(){
@@ -1203,8 +1228,11 @@ const monthlyLottoDays=month=>(state.dailyLotto||[]).filter(x=>x.date.slice(0,7)
 const estimatedCommission=(handle,rate=state.lottoRatePct)=>Math.round(Number(handle)*Number(rate)/100);
 function financials(selected=period){
  const income=revenueTotal('store',selected)+revenueTotal('lotto',selected);
- const expenses=state.records.filter(x=>x.direction==='expense'&&x.status==='confirmed'&&x.scope!=='excluded'&&x.scope!=='review'&&(selected==='all'||x.date.slice(0,7)===selected));
- return {income,expenses:sum(expenses),balance:income-sum(expenses),unreviewed:sum(state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(selected==='all'||x.date.slice(0,7)===selected)))};
+ const expenses=relevant().filter(x=>countedExpense(x)&&(selected==='all'||x.date.slice(0,7)===selected));
+ const refunds=expenses.filter(isRefundEntry),total=sum(expenses);
+ return {income,expenses:total,balance:income-total,grossExpenses:sum(expenses.filter(x=>!isRefundEntry(x))),
+  refunds:-sum(refunds),refundCount:refunds.length,
+  unreviewed:sum(state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(selected==='all'||x.date.slice(0,7)===selected)))};
 }
 function revenueTotal(type,selected=period){
  return sum(state.records.filter(x=>x.direction==='income'&&x.category===SALES[type].category&&x.status!=='excluded'&&(selected==='all'||x.date.slice(0,7)===selected)));
@@ -1910,12 +1938,19 @@ function download(name,contents,type){
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function exportJSON(){download('가계부_V2_개인백업_'+now()+'.json',JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2),'application/json;charset=utf-8')}
-function exportCSV(){
- const headers=['날짜','시간','거래처','실제 결제수단','뱅샐 등록 카드·원본 결제수단','온누리 사용','순지출','원결제','연결 환불','사용처','지출종류','대분류','소분류','상태','원본','메모'];
- const rows=state.records.filter(x=>x.direction==='expense').map(x=>[x.date,x.time,x.merchant,paymentLabel(x),x.bankPayment||x.payment||'',isOnnuri(x)?'예':'아니오',netExpenseAmount(x),x.amount,refundedAmount(x),LABEL[x.scope]||x.scope,GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note]);
+function transactionCSV(){
+ const headers=['날짜','시간','거래처','실제 결제수단','뱅샐 등록 카드·원본 결제수단','온누리 사용','지출 반영액','원결제 금액(참고)','연결 환불(참고)','사용처','지출종류','대분류','소분류','상태','원본','메모','항목','원결제 ID','원결제 연결상태','거래금액'];
+ const rows=ledgerEntries().sort((a,b)=>a.date.localeCompare(b.date)||String(a.time||'').localeCompare(String(b.time||''))).map(x=>{
+  const refund=isRefundEntry(x);
+  return [x.date,x.time,x.merchant,paymentLabel(x),x.bankPayment||x.payment||'',!refund&&isOnnuri(x)?'예':'아니오',
+   countedExpense(x)?n(x.amount):0,refund?(x.originalAmount??''):x.amount,refund?0:refundedAmount(x),
+   LABEL[x.scope]||(refund?'사용처 미지정':x.scope),refund?'환불':GROUP[x.ledgerType]||'',x.category,x.subcategory,x.status,x.sourceSheet||'',x.note,
+   refund?'환불':'결제',refund?x.refundOf||'':x.id,refund?(x.refundStatus==='matched'?'연결됨':'미연결'):'',x.amount];
+ });
  const enc=x=>'"'+String(x??'').replaceAll('"','""')+'"';
- download('가계부_V2_거래내역_'+now()+'.csv','\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+ return '\uFEFF'+[headers,...rows].map(r=>r.map(enc).join(',')).join('\r\n');
 }
+function exportCSV(){download('가계부_V2_거래내역_'+now()+'.csv',transactionCSV(),'text/csv;charset=utf-8')}
 /* Explicit deletion operations. Never mutate V1 localStorage or source files.
    Storage is committed before UI acknowledges removal. */
 function deleteRecordById(id,confirmAction=true){
