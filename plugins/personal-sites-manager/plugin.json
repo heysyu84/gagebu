@@ -1,0 +1,29 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "personal-sites-manager",
+  "version": "1.0.0",
+  "description": "Manage personal sites through narrow, authenticated tools. Ledger first; Windmoon and clan are not yet connected.",
+  "repository": "https://github.com/heysyu84/gagebu",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "개인 사이트 관리",
+        "shortDescription": "가계부 조회·수정·환불·되돌리기",
+        "longDescription": "필요한 거래만 조회하고 버전·거래 식별값을 확인한 뒤 수정합니다. 풍월관과 클전은 아직 연결되지 않았습니다.",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://store-ledger-private-api.heysyu84.workers.dev/manage",
+        "defaultPrompt": [
+          "가계부의 최근 변경 내역을 확인해줘.",
+          "지정한 거래를 찾아 분류를 수정해줘."
+        ],
+        "brandColor": "#17634E",
+        "logo": "./assets/icon.svg",
+        "composerIcon": "./assets/icon.svg"
+      }
+    }
+  }
+}

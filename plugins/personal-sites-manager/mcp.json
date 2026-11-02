@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "personal-sites": {
+      "type": "streamable-http",
+      "url": "https://store-ledger-private-api.heysyu84.workers.dev/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {"mode": "dcr"},
+            "resource": "https://store-ledger-private-api.heysyu84.workers.dev/mcp",
+            "baseScopes": ["gagebu:read"],
+            "defaultScopes": ["gagebu:read", "gagebu:write"]
+          }
+        }
+      }
+    }
+  }
+}

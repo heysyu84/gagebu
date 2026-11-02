@@ -5,6 +5,9 @@
  */
 import '../ledger-validation.js';
 import {readDocument,writeDocument,listDocumentHistory,readDocumentVersion} from './storage.js';
+import {handleOAuth} from './mcp-oauth.js';
+import {handleMcp} from './mcp.js';
+import {callManagement} from './management.js';
 const SESSION_SECONDS=12*60*60;
 const MAX_BODY_BYTES=4*1024*1024;
 const text = (status,message,origin,extras={})=>reply(status,{error:message},origin,extras);
@@ -42,9 +45,23 @@ const failRate=async(req,env)=>{
   const attempt=await env.DB.prepare('SELECT fail_count,reset_at FROM auth_attempts WHERE ip_hash = ?').bind(hash).first();
   return {hash,attempt:attempt&&attempt.reset_at>now()?attempt:null};
 };
+const checkPassword=async(req,env,password)=>{
+ const {hash,attempt}=await failRate(req,env);
+ if(attempt?.fail_count>=6)return {status:429};
+ if(!equal(await digest(String(password)),await digest(env.ADMIN_PASSWORD))){
+  await env.DB.prepare(`INSERT INTO auth_attempts(ip_hash,fail_count,reset_at) VALUES(?,1,?) ON CONFLICT(ip_hash) DO UPDATE SET fail_count=CASE WHEN reset_at<? THEN 1 ELSE fail_count+1 END, reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END`).bind(hash,now()+900,now(),now()).run();
+  return {status:401};
+ }
+ await env.DB.prepare('DELETE FROM auth_attempts WHERE ip_hash = ?').bind(hash).run();
+ return {status:200};
+};
 export default {
   async fetch(req,env){
     const url=new URL(req.url),path=url.pathname,origin=req.headers.get('origin')||'';
+    if(path==='/mcp'||path==='/manage'||path.startsWith('/oauth/')||path.startsWith('/.well-known/oauth-')){
+      if(!env.DB||!env.ADMIN_PASSWORD||!env.SESSION_PEPPER)return text(503,'Server setup incomplete',null);
+      try{return path==='/mcp'?await handleMcp(req,env):await handleOAuth(req,env,checkPassword)||text(404,'Not found',null)}catch{return text(500,'Management service failed',null)}
+    }
     const allowed=new Set(String(env.ALLOWED_ORIGINS||'https://my-gagebu.pages.dev,https://heysyu84.github.io').split(',').map(s=>s.trim()).filter(Boolean));
     if(origin&&!allowed.has(origin))return text(403,'Origin not allowed',null);
     if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, PUT, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Max-Age':'600','Vary':'Origin'}});
@@ -53,18 +70,12 @@ export default {
       if(path==='/health'&&req.method==='GET'){
         const document=await env.DB.prepare("SELECT version FROM ledger_documents WHERE ledger_key='main-v2'").first();
         if(!document||!Number.isSafeInteger(document.version))throw Error('Document schema incomplete');
-        return reply(200,{ok:true,service:'store-ledger-api',schemas:[2]},origin);
+        return reply(200,{ok:true,service:'store-ledger-api',schemas:[2],mcp:'1.0.0'},origin);
       }
       if(path==='/api/login'&&req.method==='POST'){
-        const {hash,attempt}=await failRate(req,env);
-        if(attempt?.fail_count>=6)return text(429,'Too many attempts, retry after 15 minutes',origin);
         const body=await readJson(req);
         const password=String(body.password||'');
-        if(!equal(await digest(password),await digest(env.ADMIN_PASSWORD))){
-          await env.DB.prepare(`INSERT INTO auth_attempts(ip_hash,fail_count,reset_at) VALUES(?,1,?) ON CONFLICT(ip_hash) DO UPDATE SET fail_count=CASE WHEN reset_at<? THEN 1 ELSE fail_count+1 END, reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END`).bind(hash,now()+900,now(),now()).run();
-          return text(401,'Incorrect password',origin);
-        }
-        await env.DB.prepare('DELETE FROM auth_attempts WHERE ip_hash = ?').bind(hash).run();
+        const checked=await checkPassword(req,env,password);if(checked.status!==200)return text(checked.status,checked.status===429?'Too many attempts, retry after 15 minutes':'Incorrect password',origin);
         const token=createToken();
         await env.DB.prepare('DELETE FROM ledger_sessions WHERE expires_at <= ?').bind(now()).run();
         await env.DB.prepare('DELETE FROM auth_attempts WHERE reset_at <= ?').bind(now()).run();
@@ -73,6 +84,19 @@ export default {
       }
       if(!path.startsWith('/api/'))return text(404,'Not found',origin);
       if(!await verify(req,env))return text(401,'Login required',origin);
+      if(path==='/api/mcp/connections'&&req.method==='GET'){
+        const rows=await env.DB.prepare('SELECT t.family_id,t.scope,t.access_expires,t.refresh_expires,t.revoked,c.client_name FROM mcp_tokens t JOIN mcp_clients c ON c.client_id=t.client_id WHERE t.revoked=0 AND t.refresh_expires>? ORDER BY t.refresh_expires DESC LIMIT 50').bind(now()).all();
+        return reply(200,{connections:rows.results.map(x=>({id:x.family_id,name:x.client_name,scopes:x.scope.split(' '),accessExpiresAt:x.access_expires,connectionExpiresAt:x.refresh_expires,revoked:!!x.revoked}))},origin);
+      }
+      if(path==='/api/mcp/connections/revoke'&&req.method==='POST'){
+        const input=await readJson(req);if(typeof input.id!=='string'||input.id.length>100)return text(400,'Invalid connection',origin);
+        await env.DB.prepare('UPDATE mcp_tokens SET revoked=1 WHERE family_id=?').bind(input.id).run();
+        return reply(200,{ok:true},origin);
+      }
+      if(path==='/api/management'&&req.method==='POST'){
+        const input=await readJson(req);
+        try{return reply(200,await callManagement(input.tool,input.arguments||{},env,{actor:'website-owner',scopes:['gagebu:read','gagebu:write']}),origin)}catch(error){return text(error.status||500,error.status?error.message:'Management request failed',origin)}
+      }
       if(path==='/api/logout'&&req.method==='POST'){
         const token=getToken(req);await env.DB.prepare('DELETE FROM ledger_sessions WHERE token_hash = ?').bind(await digest(`${env.SESSION_PEPPER}:${token}`)).run();
         return reply(200,{ok:true},origin);

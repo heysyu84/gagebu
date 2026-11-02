@@ -25,7 +25,7 @@ export async function readDocument(db){
  }
  throw Error('Incomplete saved revision');
 }
-export async function writeDocument(db,version,data){
+export async function writeDocument(db,version,data,{audits=[]}={}){
  const content=JSON.stringify(data),revision=crypto.randomUUID(),chunks=[];
  for(let at=0;at<content.length;){
   let end=Math.min(at+CHUNK_CHARS,content.length);
@@ -35,6 +35,7 @@ export async function writeDocument(db,version,data){
  const statements=[db.prepare("UPDATE ledger_documents SET version=version+1,revision=?,chunk_count=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ledger_key=? AND version=?").bind(revision,chunks.length,KEY,version)];
  chunks.forEach((part,i)=>statements.push(db.prepare('INSERT INTO ledger_document_chunks(ledger_key,revision,part,content) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM ledger_documents WHERE ledger_key=? AND revision=?)').bind(KEY,revision,i,part,KEY,revision)));
  statements.push(db.prepare('INSERT INTO ledger_document_history(ledger_key,version,revision,chunk_count,updated_at) SELECT ledger_key,version,revision,chunk_count,updated_at FROM ledger_documents WHERE ledger_key=? AND revision=?').bind(KEY,revision));
+ for(const a of audits)statements.push(db.prepare('INSERT INTO management_changes(id,actor,kind,target_id,before_json,after_json,identity_json,reason,version_before,version_after,created_at,undo_of) SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM ledger_documents WHERE ledger_key=? AND revision=?)').bind(a.id,a.actor,a.kind,a.targetId,JSON.stringify(a.before),JSON.stringify(a.after),JSON.stringify(a.identity),a.reason,version,version+1,a.at,a.undoOf||null,KEY,revision));
  statements.push(db.prepare('DELETE FROM ledger_document_history WHERE ledger_key=? AND version < ? AND EXISTS (SELECT 1 FROM ledger_documents WHERE ledger_key=? AND revision=?)').bind(KEY,version+2-MAX_HISTORY,KEY,revision));
  statements.push(db.prepare('DELETE FROM ledger_document_chunks WHERE ledger_key=? AND revision NOT IN (SELECT revision FROM ledger_document_history WHERE ledger_key=?) AND EXISTS (SELECT 1 FROM ledger_documents WHERE ledger_key=? AND revision=?)').bind(KEY,KEY,KEY,revision));
  const result=await db.batch(statements);

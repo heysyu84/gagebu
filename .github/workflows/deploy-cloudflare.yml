@@ -76,3 +76,5 @@ jobs:
           node -e "const fs=require('node:fs');fs.writeFileSync(process.argv[1],JSON.stringify({ADMIN_PASSWORD:process.env.LEDGER_ADMIN_PASSWORD,SESSION_PEPPER:process.env.LEDGER_SESSION_PEPPER}),{mode:0o600})" "$secret_file"
           npx --yes wrangler@4 deploy --secrets-file "$secret_file"
           echo "Worker deployed. Open the GitHub Pages ledger and enter the workers.dev URL under Data Management > Server Storage."
+      - name: Verify private MCP connection without editing financial records
+        run: node scripts/check-mcp-live.mjs

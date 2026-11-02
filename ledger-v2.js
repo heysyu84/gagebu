@@ -51,6 +51,7 @@ let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='al
 let sync=null,persistedState=null,storageFailure='',corruptStorage=false,serverBusy=false;
 let recordsMode='active',activeRefund='',queryTimer=null;
 let serverHistory=[],serverHistoryEntries=[],historyCursor=0,historyOlder=null,historyBusy=false,historyMessage='';
+let mcpConnections=null,mcpConnectionBusy=false,mcpConnectionMessage='';
 const CLASS_FIELDS=['scope','ledgerType','category','subcategory','status'];
 const CLASS_META=['manual','confidence','reason','ruleId','detailSubcategory','scopeBeforeExclusion'];
 const owns=(row,key)=>Object.prototype.hasOwnProperty.call(row,key);
@@ -1460,7 +1461,7 @@ async function loadClassificationHistory(older=false){
 }
 function settingsPage(){
  return pageIntro('DATA & STORAGE','저장 · 백업','저장 상태를 확인하고 전체 장부를 백업할 수 있습니다.')+
- serverSettings()+
+ serverSettings()+mcpSettings()+
  '<section class="settings-grid"><div class="surface settings-box"><div class="surface-head"><div><h2>데이터 백업</h2><p>금융 정보와 거래처가 포함된 개인 파일입니다.</p></div></div>'+
  '<button class="btn primary wide" id="export-json">JSON 전체 백업 내려받기</button><button class="btn subtle wide" id="export-csv">CSV 거래내역 내려받기</button>'+
  '<div class="notice compact"><b>보안</b><p>백업 파일은 개인 기기 또는 암호화된 저장소에 보관하세요. 공개 GitHub에 업로드하면 안 됩니다.</p></div></div>'+
@@ -1474,6 +1475,23 @@ function settingsPage(){
  '<p>거래·월매출·토토 일별 기록·온누리 결제 체크·직접 분류 규칙·가져오기 이력을 모두 초기화합니다. 중요한 자료는 JSON으로 먼저 백업하세요.</p>'+
  '<button type="button" class="btn danger" id="reset-all-v2">전체 데이터 초기화</button></div></details>'+
  '<div class="notice"><b>저장 상태 확인</b><p>상단에 “서버 저장 확인됨”이 표시된 자료만 서버 저장이 완료된 상태입니다. 연결이 끊겨도 이 기기의 자료는 유지되며, 다른 기기와 충돌하면 자료 선택 전까지 자동 덮어쓰기를 멈춥니다.</p></div>';
+}
+function mcpSettings(){
+ let base='';try{const u=new URL(sync?.url||'');if(u.protocol==='https:')base=u.origin}catch{}
+ const enabled=!!sync?.token,disabled=mcpConnectionBusy||!enabled?' disabled':'';
+ return '<section class="surface settings-box"><div class="surface-head"><div><h2>AI 관리 연결</h2><p>사이트는 AI 연결 없이도 사용할 수 있습니다. 연결한 앱의 조회·수정 권한을 확인하거나 종료할 수 있습니다.</p></div></div>'+
+ '<label class="field">MCP 서버 주소<input type="text" readonly value="'+E(base?base+'/mcp':'먼저 서버를 연결하세요.')+'" aria-label="MCP 서버 주소"></label>'+
+ '<div class="server-actions">'+(base?'<a class="btn" href="'+E(base)+'/manage" target="_blank" rel="noopener noreferrer">연결 안내</a>':'')+'<button class="btn" id="mcp-load-connections"'+disabled+'>'+(mcpConnectionBusy?'확인 중…':'연결한 앱 확인')+'</button></div>'+
+ (mcpConnectionMessage?'<p role="status">'+E(mcpConnectionMessage)+'</p>':'')+
+ (enabled&&mcpConnections?mcpConnections.length?mcpConnections.map(x=>'<div class="summary-line"><div><b>'+E(x.name)+'</b><p class="server-help">'+E(x.scopes.includes('gagebu:write')?'조회·수정':'조회 전용')+' · '+(x.revoked?'권한 종료됨':'연결 만료 '+E(new Date(x.connectionExpiresAt*1000).toLocaleDateString('ko-KR',{timeZone:'Asia/Seoul'})))+'</p></div><button class="btn subtle" data-mcp-revoke="'+E(x.id)+'"'+(x.revoked||mcpConnectionBusy?' disabled':'')+'>연결 권한 종료</button></div>').join(''):'<p class="server-help">연결 중인 관리 앱이 없습니다.</p>':'')+'</section>';
+}
+async function mcpConnectionAction(id=''){
+ if(!sync?.token||mcpConnectionBusy)return;
+ if(id&&!confirm('이 앱의 가계부 조회·수정 권한을 종료할까요? 사이트의 일반 기능과 장부 자료는 유지됩니다.'))return;
+ mcpConnectionBusy=true;mcpConnectionMessage='';render();
+ try{if(id)await sync.request('/api/mcp/connections/revoke',{method:'POST',body:{id}});mcpConnections=(await sync.request('/api/mcp/connections')).connections;mcpConnectionMessage=id?'앱의 연결 권한을 종료했습니다.':''}
+ catch(error){mcpConnectionMessage=error.message;if(error.status===401)sync.error(error)}
+ finally{mcpConnectionBusy=false;render()}
 }
 function serverSettings(){
  const s=sync,status=storageFailure||s?.status.label||'이 브라우저에 저장됨',busy=serverBusy?' disabled':'',connected=!!s?.token;
@@ -2138,6 +2156,8 @@ function submitEditor(f){
 }
 function onClick(event){
  const target=event.target.closest('button,a,[data-nav]');if(!target)return;
+ if(target.id==='mcp-load-connections'){void mcpConnectionAction();return}
+ if(target.dataset.mcpRevoke){void mcpConnectionAction(target.dataset.mcpRevoke);return}
  if(target.dataset.undoClassification){
   const entry=[...(state.classificationHistory||[]),...serverHistoryEntries].find(x=>x.id===target.dataset.undoClassification);if(entry)undoClassification(entry);return;
  }
