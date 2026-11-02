@@ -75,6 +75,37 @@ test('refund-only months render in the dashboard with an explicit credit total',
  const html=f.dashboard();assert.match(html,/환불 1건/);assert.match(html,/-3,000원/);assert.match(html,/사용처 미지정 환불 1건/);
  assert.match(html,/class="expense refund"/);assert(!html.includes('NaN'));assert(!html.includes('Infinity'));
 });
+test('category and merchant rankings net linked refunds without changing ledger postings',()=>{
+ const charges=[11000,13000,17000,19000,23000];
+ const records=charges.map((amount,i)=>({...purchase('hotel-'+i,amount),category:'여행/숙박',merchant:i?'TEST HOTEL':'TEST BOOKING'}));
+ const refunds=charges.slice(0,4).map((amount,i)=>({...refund('hotel-refund-'+i),amount,status:'matched',refundOf:'hotel-'+i,merchant:'환불 처리 대행사'}));
+ const f=ledger({...empty(),records,refunds}),before=JSON.stringify(f.get());
+ f.setView({page:'dashboard'});const html=f.dashboard();
+ const categories=html.split('<h2>소비지출 TOP 9</h2>')[1].split('</section>')[0];
+ const merchants=html.split('<h2>많이 지출한 거래처</h2>')[1].split('</section>')[0];
+ assert.match(categories,/여행\/숙박/);assert.match(categories,/23,000원/);assert(!categories.includes('83,000원'));
+ assert.match(merchants,/TEST HOTEL/);assert.match(merchants,/23,000원/);assert(!merchants.includes('환불 처리 대행사'));
+ assert.equal(f.financials('all').expenses,23000);
+ assert(f.refundEntries().every(x=>x.category==='환불'&&x.date==='2026-11-02'));
+ assert.equal(JSON.stringify(f.get()),before);
+});
+test('rankings deduct later refunds only in their posting month and keep fixed and consumption separate',()=>{
+ const f=ledger({...empty(),records:[{...purchase(),category:'공통항목'},{...purchase('fixed',5000),ledgerType:'fixed',category:'공통항목'}],refunds:[
+  {...refund(),status:'matched',refundOf:'p'},
+  {...refund('fixed-credit'),amount:1000,status:'matched',refundOf:'fixed'},
+  {...refund('unlinked'),amount:700},
+  {...refund('excluded'),amount:9000,status:'excluded',refundOf:'p'}
+ ]});
+ const section=(html,title)=>html.split('<h2>'+title+'</h2>')[1].split('</section>')[0];
+ f.setView({page:'dashboard',period:'2026-10'});let html=f.dashboard();
+ assert.match(section(html,'소비지출 TOP 9'),/10,000원/);assert.match(section(html,'고정지출 TOP 9'),/5,000원/);
+ assert.equal(f.financials('2026-10').expenses,15000);
+ f.setView({page:'dashboard',period:'2026-11'});html=f.dashboard();
+ const consumption=section(html,'소비지출 TOP 9'),fixed=section(html,'고정지출 TOP 9');
+ assert.match(consumption,/공통항목/);assert.match(consumption,/-3,000원/);assert(!consumption.includes('-700원'));
+ assert.match(fixed,/공통항목/);assert.match(fixed,/-1,000원/);
+ assert.equal(f.financials('2026-11').expenses,-4700);assert.equal(f.financials('all').expenses,10300);
+});
 test('deleting a purchase keeps its refund in review instead of leaving an orphan link',()=>{
  const f=ledger({...empty(),records:[purchase()],refunds:[{...refund(),status:'matched',refundOf:'p'}]});
  assert(f.deleteRecordById('p',false));assert.equal(f.get().refunds.length,1);
