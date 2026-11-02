@@ -8,6 +8,8 @@ on:
       - 'worker/**'
       - 'ledger-validation.js'
       - 'db/schema.sql'
+      - 'wrangler.toml.example'
+      - 'scripts/configure-cloudflare.mjs'
       - '.github/workflows/deploy-cloudflare.yml'
 
 permissions:

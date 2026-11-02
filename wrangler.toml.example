@@ -10,4 +10,4 @@ database_name = "store-ledger-private"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 [vars]
-ALLOWED_ORIGINS = "https://my-gagebu.pages.dev,https://heysyu84.github.io"
+ALLOWED_ORIGINS = "https://my-gagebu.pages.dev,https://heysyu84.github.io,https://gagebu-money-desk.heysyu457310.chatgpt.site"
