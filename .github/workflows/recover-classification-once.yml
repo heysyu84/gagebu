@@ -1,0 +1,63 @@
+name: Recover recent accidental classification
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/recover-classification-once.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ledger-classification-recovery
+  cancel-in-progress: false
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    env:
+      LEDGER_PASSWORD: ${{ secrets.STORE_LEDGER_ADMIN_PASSWORD }}
+    steps:
+      - name: Compare saved versions and recover one isolated classification change
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import {createHash} from 'node:crypto';
+          const base='https://store-ledger-private-api.heysyu84.workers.dev',marker='recovery-classification-20261103-712e492a';
+          let token='';
+          async function api(path,method='GET',body){
+            const response=await fetch(base+path,{method,signal:AbortSignal.timeout(15000),headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+            if(!response.ok)throw Error('Ledger request failed: '+response.status);
+            return response.json();
+          }
+          const own=(x,k)=>Object.prototype.hasOwnProperty.call(x,k),same=(a,b,k)=>own(a,k)===own(b,k)&&JSON.stringify(a[k])===JSON.stringify(b[k]);
+          const core=['scope','ledgerType','category','subcategory','status'],allowed=[...core,'manual','confidence','reason','ruleId','detailSubcategory','scopeBeforeExclusion'];
+          try{
+            token=(await api('/api/login','POST',{password:process.env.LEDGER_PASSWORD})).token;
+            const {versions}=await api('/api/v2/history');
+            versions.sort((a,b)=>b.version-a.version);
+            if(versions.length<2){console.log('RECOVERY_RESULT '+JSON.stringify({restored:false,reason:'not_enough_versions',versions:versions.length}));process.exitCode=0;}
+            else{
+              const [latest,previous]=await Promise.all(versions.slice(0,2).map(x=>api('/api/v2/history/'+x.version)));
+              const old=new Map(previous.data.records.map(x=>[x.id,x]));
+              const changed=latest.data.records.filter(row=>old.has(row.id)&&core.some(k=>!same(old.get(row.id),row,k)));
+              const allChanges=latest.data.records.filter(row=>!old.has(row.id)||JSON.stringify(row)!==JSON.stringify(old.get(row.id)));
+              const result={restored:false,previousVersion:previous.version,version:latest.version,updatedAt:latest.updatedAt,classificationChanges:changed.length,otherRecordChanges:allChanges.length-changed.length};
+              const inTask=Date.parse(latest.updatedAt)>=Date.parse('2026-11-02T15:51:59Z')&&Date.parse(latest.updatedAt)<=Date.parse('2026-11-02T16:29:35.358763+00:00');
+              const already=(latest.data.classificationHistory||[]).some(x=>x.id===marker);
+              if(changed.length===1&&allChanges.length===1&&latest.data.records.length===previous.data.records.length&&inTask&&!already){
+                const row=changed[0],before=old.get(row.id),keys=new Set([...Object.keys(before),...Object.keys(row)]);
+                const fields=[...keys].filter(k=>!same(before,row,k));
+                if(fields.every(k=>allowed.includes(k))){
+                  const next=structuredClone(latest.data),target=next.records.find(x=>x.id===row.id),a={},b={};
+                  for(const k of fields){if(own(before,k)){target[k]=before[k];a[k]=before[k]}else delete target[k];if(own(row,k))b[k]=row[k];}
+                  const at=new Date().toISOString(),entry={id:marker,recordId:row.id,date:row.date,merchant:row.merchant||'',amount:row.amount,at:latest.updatedAt,source:'서버 저장본 비교',fields,before:a,after:b,undoneAt:at};
+                  next.classificationHistory=[{...entry,id:marker+'-undo',at,source:'local',before:b,after:a,undoneAt:undefined},entry,...(next.classificationHistory||[])].slice(0,100);
+                  const saved=await api('/api/v2/state','PUT',{version:latest.version,data:next});
+                  const verified=await api('/api/v2/state');
+                  if(verified.version!==saved.version||JSON.stringify(verified.data)!==JSON.stringify(next))throw Error('Read-back verification failed');
+                  Object.assign(result,{restored:true,versionAfter:saved.version,recordHash:createHash('sha256').update(row.id).digest('hex'),fields});
+                }else result.reason='other_fields_changed';
+              }else result.reason=already?'already_recovered':!inTask?'outside_task_time':'not_one_isolated_change';
+              console.log('RECOVERY_RESULT '+JSON.stringify(result));
+            }
+          }finally{if(token)await api('/api/logout','POST',{}).catch(()=>{});}
+          JS
