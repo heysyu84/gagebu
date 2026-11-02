@@ -52,24 +52,31 @@ jobs:
             versions.sort((a,b)=>b.version-a.version);
             if(versions.length<2){console.log('RECOVERY_RESULT '+JSON.stringify({restored:false,reason:'not_enough_versions',versions:versions.length}));process.exitCode=0;}
             else{
-              const [latest,previous]=await Promise.all(versions.slice(0,2).map(x=>readSaved(x.version)));
+              const snapshots=await Promise.all(versions.map(x=>readSaved(x.version))),current=snapshots[0];
               const active=await api('/api/v2/state');
-              if(active.version!==latest.version||JSON.stringify(active.data)!==JSON.stringify(latest.data))throw Error('Worker and D1 saved versions differ; no changes made');
-              const old=new Map(previous.data.records.map(x=>[x.id,x]));
-              const changed=latest.data.records.filter(row=>old.has(row.id)&&core.some(k=>!same(old.get(row.id),row,k)));
-              const allChanges=latest.data.records.filter(row=>!old.has(row.id)||JSON.stringify(row)!==JSON.stringify(old.get(row.id)));
-              const result={restored:false,previousVersion:previous.version,version:latest.version,updatedAt:latest.updatedAt,classificationChanges:changed.length,otherRecordChanges:allChanges.length-changed.length};
+              if(active.version!==current.version||JSON.stringify(active.data)!==JSON.stringify(current.data))throw Error('Worker and D1 saved versions differ; no changes made');
+              const pairs=snapshots.slice(1).map((previous,index)=>{
+                const latest=snapshots[index],old=new Map(previous.data.records.map(x=>[x.id,x]));
+                const changed=latest.data.records.filter(row=>old.has(row.id)&&core.some(k=>!same(old.get(row.id),row,k)));
+                const allChanges=latest.data.records.filter(row=>!old.has(row.id)||JSON.stringify(row)!==JSON.stringify(old.get(row.id)));
+                const rootFields=[...new Set([...Object.keys(previous.data),...Object.keys(latest.data)])].filter(k=>k!=='records'&&!same(previous.data,latest.data,k));
+                return {latest,previous,old,changed,allChanges,rootFields};
+              });
+              console.log('HISTORY_SCAN '+JSON.stringify(pairs.map(p=>({from:p.previous.version,to:p.latest.version,at:p.latest.updatedAt,classificationChanges:p.changed.length,otherRecordChanges:p.allChanges.length-p.changed.length,rootFields:p.rootFields,recordHashes:p.changed.map(r=>createHash('sha256').update(r.id).digest('hex'))}))));
+              const pair=pairs.find(p=>p.changed.length>0)||pairs[0];
+              const {latest,previous,old,changed,allChanges}=pair;
+              const result={restored:false,previousVersion:previous.version,version:current.version,eventVersion:latest.version,updatedAt:latest.updatedAt,classificationChanges:changed.length,otherRecordChanges:allChanges.length-changed.length};
               const inTask=Date.parse(latest.updatedAt)>=Date.parse('2026-11-02T15:51:59Z')&&Date.parse(latest.updatedAt)<=Date.parse('2026-11-02T16:29:35.358763+00:00');
-              const already=(latest.data.classificationHistory||[]).some(x=>x.id===marker);
+              const already=(current.data.classificationHistory||[]).some(x=>x.id===marker);
               if(changed.length===1&&allChanges.length===1&&latest.data.records.length===previous.data.records.length&&inTask&&!already){
                 const row=changed[0],before=old.get(row.id),keys=new Set([...Object.keys(before),...Object.keys(row)]);
                 const fields=[...keys].filter(k=>!same(before,row,k));
-                if(fields.every(k=>allowed.includes(k))){
-                  const next=structuredClone(latest.data),target=next.records.find(x=>x.id===row.id),a={},b={};
+                if(fields.every(k=>allowed.includes(k))&&current.data.records.some(r=>r.id===row.id&&fields.every(k=>same(r,row,k)))){
+                  const next=structuredClone(current.data),target=next.records.find(x=>x.id===row.id),a={},b={};
                   for(const k of fields){if(own(before,k)){target[k]=before[k];a[k]=before[k]}else delete target[k];if(own(row,k))b[k]=row[k];}
                   const at=new Date().toISOString(),entry={id:marker,recordId:row.id,date:row.date,merchant:row.merchant||'',amount:row.amount,at:latest.updatedAt,source:'서버 저장본 비교',fields,before:a,after:b,undoneAt:at};
                   next.classificationHistory=[{...entry,id:marker+'-undo',at,source:'local',before:b,after:a,undoneAt:undefined},entry,...(next.classificationHistory||[])].slice(0,100);
-                  const saved=await api('/api/v2/state','PUT',{version:latest.version,data:next});
+                  const saved=await api('/api/v2/state','PUT',{version:current.version,data:next});
                   const verified=await api('/api/v2/state');
                   if(verified.version!==saved.version||JSON.stringify(verified.data)!==JSON.stringify(next))throw Error('Read-back verification failed');
                   Object.assign(result,{restored:true,versionAfter:saved.version,recordHash:createHash('sha256').update(row.id).digest('hex'),fields});
