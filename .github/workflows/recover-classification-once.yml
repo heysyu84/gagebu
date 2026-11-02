@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 3
     env:
       LEDGER_PASSWORD: ${{ secrets.STORE_LEDGER_ADMIN_PASSWORD }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       - name: Compare saved versions and recover one isolated classification change
         shell: bash
@@ -28,15 +30,31 @@ jobs:
             if(!response.ok)throw Error('Ledger request failed: '+response.status);
             return response.json();
           }
+          async function query(sql,params=[]){
+            const url='https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID+'/d1/database/7010b43d-5c16-436f-9375-74ee5c127228/query';
+            const response=await fetch(url,{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({sql,params})});
+            if(!response.ok)throw Error('D1 read failed: '+response.status);
+            const body=await response.json();if(!body.success||!body.result?.[0]?.success)throw Error('D1 read failed');
+            return body.result[0].results;
+          }
+          async function readSaved(version){
+            const [row]=await query('SELECT version,revision,chunk_count,updated_at FROM ledger_document_history WHERE ledger_key=? AND version=?',['main-v2',version]);
+            if(!row)throw Error('Retained version unavailable');
+            const parts=await query('SELECT part,content FROM ledger_document_chunks WHERE ledger_key=? AND revision=? ORDER BY part',['main-v2',row.revision]);
+            if(parts.length!==row.chunk_count)throw Error('Incomplete saved version');
+            return {version:row.version,updatedAt:row.updated_at,data:JSON.parse(parts.map(x=>x.content).join(''))};
+          }
           const own=(x,k)=>Object.prototype.hasOwnProperty.call(x,k),same=(a,b,k)=>own(a,k)===own(b,k)&&JSON.stringify(a[k])===JSON.stringify(b[k]);
           const core=['scope','ledgerType','category','subcategory','status'],allowed=[...core,'manual','confidence','reason','ruleId','detailSubcategory','scopeBeforeExclusion'];
           try{
             token=(await api('/api/login','POST',{password:process.env.LEDGER_PASSWORD})).token;
-            const {versions}=await api('/api/v2/history');
+            const versions=await query('SELECT version,updated_at AS updatedAt FROM ledger_document_history WHERE ledger_key=? ORDER BY version DESC LIMIT 10',['main-v2']);
             versions.sort((a,b)=>b.version-a.version);
             if(versions.length<2){console.log('RECOVERY_RESULT '+JSON.stringify({restored:false,reason:'not_enough_versions',versions:versions.length}));process.exitCode=0;}
             else{
-              const [latest,previous]=await Promise.all(versions.slice(0,2).map(x=>api('/api/v2/history/'+x.version)));
+              const [latest,previous]=await Promise.all(versions.slice(0,2).map(x=>readSaved(x.version)));
+              const active=await api('/api/v2/state');
+              if(active.version!==latest.version||JSON.stringify(active.data)!==JSON.stringify(latest.data))throw Error('Worker and D1 saved versions differ; no changes made');
               const old=new Map(previous.data.records.map(x=>[x.id,x]));
               const changed=latest.data.records.filter(row=>old.has(row.id)&&core.some(k=>!same(old.get(row.id),row,k)));
               const allChanges=latest.data.records.filter(row=>!old.has(row.id)||JSON.stringify(row)!==JSON.stringify(old.get(row.id)));
