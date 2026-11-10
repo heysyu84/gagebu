@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#122c35"/><text x="32" y="45" text-anchor="middle" font-family="system-ui,sans-serif" font-size="42" font-weight="700" fill="#c4efce">₩</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="가게부 원화 장부 아이콘">
+  <rect width="64" height="64" rx="15" fill="#071d42"/>
+  <path d="M19 12h32a5 5 0 0 1 5 5v30a6 6 0 0 1-6 6H18a5 5 0 0 1-5-5V18a6 6 0 0 1 6-6z" fill="#ffffff"/>
+  <path d="M18 51h35v3a4 4 0 0 1-4 4H19a6 6 0 0 1-6-6v-4a5 5 0 0 0 5 3z" fill="#29e5ab"/>
+  <path d="M41 12h8v12l-4-2.7-4 2.7z" fill="#29e5ab" stroke="#071d42" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M13 22h-2M13 32h-2M13 42h-2" fill="none" stroke="#071d42" stroke-width="5" stroke-linecap="round"/>
+  <path d="M9 22h7M9 32h7M9 42h7" fill="none" stroke="#29e5ab" stroke-width="4" stroke-linecap="round"/>
+  <path d="M24 25l5.3 14 5.2-12 5.2 12L45 25" fill="none" stroke="#071d42" stroke-width="4.4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M23 30.5h23M23 35h23" fill="none" stroke="#071d42" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M24 43h23M24 48h15" fill="none" stroke="#0cbb8a" stroke-width="3.1" stroke-linecap="round"/>
+</svg>
