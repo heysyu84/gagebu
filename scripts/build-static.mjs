@@ -3,5 +3,6 @@ const files=['index.html','style-v2.css','ledger-v2.js','ledger-rules-v2.js','le
 fs.mkdirSync('dist',{recursive:true});
 for(const entry of fs.readdirSync('dist'))fs.rmSync('dist/'+entry,{recursive:true,force:true});
 for(const file of files)fs.copyFileSync(file,'dist/'+file);
-fs.cpSync('vendor','dist/vendor',{recursive:true});
+fs.mkdirSync('dist/vendor',{recursive:true});
+for(const file of ['jszip.min.js','LICENSE-jszip.md'])fs.copyFileSync('vendor/'+file,'dist/vendor/'+file);
 console.log('Built static site in dist (application assets only).');

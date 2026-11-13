@@ -17,7 +17,7 @@ const isOnnuri=x=>x.onnuri===true||(!('onnuri' in x)&&/온누리/.test(String(x.
 const paymentLabel=x=>isOnnuri(x)?'온누리상품권':String(x.payment||'—');
 const registeredCard=x=>isOnnuri(x)?String(x.bankPayment||(/온누리/.test(String(x.payment||''))?'':x.payment)||''):'';
 const onnuriLinkedCard=x=>isOnnuri(x)?String(x.onnuriLinkedCard||''):'';
-const onnuriCheckbox=(x,location)=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
+const onnuriCheckbox=x=>'<label class="onnuri-choice"><input type="checkbox" data-onnuri-id="'+E(x.id)+'" '+(isOnnuri(x)?'checked':'')+' aria-label="'+E(x.merchant||'거래')+' 온누리상품권 사용 여부">'+
   '<span>온누리상품권으로 결제</span></label>';
 
 /* Default Onnuri for repeated use at the EXACT recorded shop. No merchant names hardcoded. */
@@ -47,7 +47,7 @@ function syncEditorOnnuriDefault(){
  el.title=suggestion.auto?'동일 가게의 과거 온누리 결제 이력으로 자동 체크됨':'';
 }
 const blank=()=>({version:2,records:[],refunds:[],dailyLotto:[],storeProfits:{},lottoRatePct:5.97,customRules:{},rentRecipients:{},legacyDailySynced:false,bankSaladBaselineVersion:0,fixedPurchasePresetVersion:0,consumptionOnlinePresetVersion:0,taxonomy:null,taxonomyAliases:[],paymentMethods:[],hiddenPaymentMethods:[],paymentAliases:{},customLabels:{scopes:{},groups:{}},imports:[],excludedAudit:[],createdAt:new Date().toISOString()});
-let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,shownTip=false,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
+let state=blank(),page='dashboard',period='all',scopeFilter='all',typeFilter='all',paymentFilter='all',q='',offset=0,reviewOffset=0,preview=null,editing=null,toastTimer=null,salesMonth=ym(),lottoMonth=ym(),bankImportRange={from:'2026-01-01',to:now()},lastBankFile=null,bankLoadToken=0;
 let sync=null,persistedState=null,storageFailure='',corruptStorage=false,serverBusy=false;
 let recordsMode='active',activeRefund='',queryTimer=null;
 let serverHistory=[],serverHistoryEntries=[],historyCursor=0,historyOlder=null,historyBusy=false,historyMessage='';
@@ -84,7 +84,6 @@ function undoClassification(entry,ask=true){
 }
 const dateDiff=(a,b)=>Math.abs((Date.parse(a+'T00:00:00Z')-Date.parse(b+'T00:00:00Z'))/86400000);
 const money=val=>Math.abs(Number(val)||0);
-const escAttr=E;
 /* Migrate the old "풍월관 / 편의점·식비·소모품" layout without dropping the original detail. */
 const WINDMOON_OLD_MAJOR={'편의점':'생활','식비':'식비','소모품':'생활','온라인 구매':'온라인쇼핑','운영 관련':'생활'};
 function normalizeWindmoon(row){
@@ -149,18 +148,6 @@ function mergeDailyLotto(rows){
  }
  return {added,skipped};
 }
-function mergeStoreProfits(profits){
- const data=profits&&typeof profits==='object'&&!Array.isArray(profits)?profits:{};
- state.storeProfits=state.storeProfits||{};let changed=0;
- for(const [month,raw] of Object.entries(data)){
-   const amount=Number(raw);
-   if(!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||!Number.isSafeInteger(amount))continue;
-   if(state.storeProfits[month]===undefined||state.storeProfits[month]===null){
-     state.storeProfits[month]=amount;changed++;
-   }
- }
- return changed;
-}
 function save(){
  if(!GagebuValidation.validV2(state)){
   if(persistedState)state=JSON.parse(persistedState);
@@ -182,7 +169,7 @@ function save(){
  }
 }
 function load(){
- let hadV2=false;
+ let hadV2=false,loadedState=null;
  try{
    const existing=JSON.parse(localStorage.getItem(KEY)||'null');
    if(existing!==null&&(!existing||existing.version!==2||!Array.isArray(existing.records)))throw Error('Invalid saved ledger');
@@ -193,12 +180,13 @@ function load(){
      if(!state.storeProfits||typeof state.storeProfits!=='object')state.storeProfits={};
      if(!GagebuValidation.validV2(state))throw Error('Invalid saved ledger');
      persistedState=JSON.stringify(state);
+     loadedState=persistedState;
      taxonomy();
      if(!Object.prototype.hasOwnProperty.call(existing,'bankSaladBaselineVersion'))state.bankSaladBaselineVersion=0;
      const bankMigrated=adoptBankSaladDefaults();
      if(bankMigrated)save();
      if(!state.windmoonSubcategoryMigration){
-       const migrated=state.records.reduce((n,x)=>n+(normalizeWindmoon(x)?1:0),0);
+       state.records.forEach(normalizeWindmoon);
        state.windmoonSubcategoryMigration=true;
        save();
      }
@@ -218,6 +206,7 @@ function load(){
  }catch(err){console.warn('Legacy load failed',err)}
  // Also initialise a fresh browser before the user hides or renames categories,
  // otherwise the next reload could mistakenly restore a deliberately hidden item.
+ if(!hadV2)state.windmoonSubcategoryMigration=true;
  if(state.bankSaladBaselineVersion!==2){adoptBankSaladDefaults();save()}
  if(state.fixedPurchasePresetVersion!==1){trimUnusedPurchasePresets();save()}
  if(state.consumptionOnlinePresetVersion!==1){trimUnusedConsumptionOnlinePresets();save()}
@@ -226,6 +215,7 @@ function load(){
  if(Array.isArray(state.paymentMethods)&&state.paymentMethods.some(isPaymentMonthMarker)){
    state.paymentMethods=state.paymentMethods.filter(x=>!isPaymentMonthMarker(x));save();
  }
+ return loadedState;
 }
 const isRefundEntry=x=>x.refundEntry===true;
 const refundEntries=()=>{
@@ -451,7 +441,7 @@ function transactionTable(items,compact=false){
    '<td class="payment-col"><strong class="payment-main">'+E(paymentLabel(x))+'</strong>'+
     (!refund&&registeredCard(x)?'<small>뱅샐 원본 카드: '+E(registeredCard(x))+'</small>':'')+
     (!refund&&onnuriLinkedCard(x)?'<small>온누리 연동 카드 (사용자 확인): '+E(onnuriLinkedCard(x))+'</small>':'')+
-    (!refund&&x.direction==='expense'?onnuriCheckbox(x,'table'):'')+'</td>'+
+    (!refund&&x.direction==='expense'?onnuriCheckbox(x):'')+'</td>'+
    '<td class="classification-col">'+classification+'<small class="cat-text">'+E([x.category,x.subcategory].filter(Boolean).join(' / ')||'미분류')+'</small>'+
     (!refund&&x.scope==='windmoon'&&x.category==='온라인쇼핑'?'<small class="platform-detail">구매처: '+E(G.platformFor(x.merchant))+'</small>':'')+'</td>'+
    '<td class="right amount-col">'+(amount<0?'+':'−')+won(Math.abs(amount))+(details?'<small>'+E(x.status==='excluded'?'집계 제외':details)+'</small>':'')+'</td><td class="row-actions">'+management+'</td></tr>';
@@ -465,7 +455,7 @@ function reviewCard(x,i){
  return '<article class="review-card" data-review-id="'+E(x.id)+'"><div class="review-index">'+String(i+1).padStart(2,'0')+'</div><div class="review-main"><div class="review-top"><strong>'+E(x.merchant||'거래처 미기재')+'</strong><span>−'+won(x.amount)+'</span></div>'+
  '<div class="review-metadata">'+E(x.date)+' · '+E(paymentLabel(x))+
   (registeredCard(x)?' (뱅샐 원본 카드: '+E(registeredCard(x))+')':'')+(onnuriLinkedCard(x)?' (온누리 연동 카드: '+E(onnuriLinkedCard(x))+')':'')+
-  ' · '+E([x.bankMajor,x.bankMinor].filter(Boolean).join(' / '))+'</div>'+onnuriCheckbox(x,'review')+
+  ' · '+E([x.bankMajor,x.bankMinor].filter(Boolean).join(' / '))+'</div>'+onnuriCheckbox(x)+
  '<p class="review-reason">'+E(x.reason||'분류 확인 필요')+'</p>'+suggest+
  '<div class="review-choices"><button data-scope="personal" data-id="'+E(x.id)+'" class="choice personal"><b>1</b> 개인 소비</button>'+
  '<button data-scope="business" data-id="'+E(x.id)+'" class="choice business"><b>2</b> 편의점 매입</button>'+
@@ -476,7 +466,7 @@ function reviewCard(x,i){
 }
 function reviewPage(){
  const list=state.records.filter(x=>x.direction==='expense'&&reviewableExpense(x)&&(period==='all'||x.date.slice(0,7)===period)).sort((a,b)=>b.date.localeCompare(a.date));
- const online=list.filter(x=>x.category==='온라인쇼핑').length;
+ reviewOffset=Math.min(reviewOffset,Math.max(0,Math.ceil(list.length/35)-1)*35);
  const pendingRefunds=(state.refunds||[]).filter(x=>x.status==='review'&&(period==='all'||x.date.slice(0,7)===period));
  return pageIntro('REVIEW INBOX','분류가 필요한 거래','애매한 거래를 임의 분류하지 않았습니다. 개인·편의점·풍월관 버튼 중 하나를 누르면 즉시 해당 장부로 이동합니다.',
  '<select id="period-filter" aria-label="조회 기간">'+monthlyOptions()+'</select>')+
@@ -1502,14 +1492,16 @@ async function mcpConnectionAction(id=''){
 function serverSettings(){
  const s=sync,status=storageFailure||s?.status.label||'이 브라우저에 저장됨',busy=serverBusy?' disabled':'',connected=!!s?.token;
  const last=s?.meta.lastSyncedAt?new Date(s.meta.lastSyncedAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'아직 없음';
- return '<section class="surface server-storage"><div class="surface-head"><div><h2>서버 저장 · 기기 간 동기화</h2><p>로그인 후 변경 내용을 자동 저장합니다. 비밀번호는 저장하지 않습니다.</p></div><span class="tag '+(s?.status.kind==='saved'?'tag-ok':'tag-warn')+'">'+E(status)+'</span></div>'+
+ return '<section class="surface server-storage"><div class="surface-head"><div><h2>자동 저장 · 기기 간 동기화</h2><p>변경 내용은 이 브라우저에 먼저 저장하고 서버에 자동 반영합니다.</p></div><span class="tag '+(s?.status.kind==='saved'?'tag-ok':'tag-warn')+'">'+E(status)+'</span></div>'+
  '<div class="server-storage-body">'+(corruptStorage?'<div class="notice storage-alert"><b>저장된 원본을 읽지 못했습니다.</b><p>자동 저장을 중지하고 원본을 보존했습니다. 아래에서 원본을 내려받은 뒤 서버 자료를 불러올 수 있습니다.</p><button class="btn" id="backup-unreadable">읽지 못한 원본 내려받기</button></div>':'')+
+ (connected?'<details class="server-login-details"><summary>서버 연결 변경</summary>':'')+
  '<form id="server-login-form" class="server-connect"><label>개인 API 주소<input name="apiBase" type="url" required value="'+E(s?.url||'')+'" placeholder="https://store-ledger-private-api.계정.workers.dev" autocomplete="url"></label>'+
- '<label>관리자 비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="서버에 설정한 비밀번호"></label><button class="btn primary" type="submit"'+busy+'>'+(serverBusy?'연결 중…':connected?'다시 로그인':'서버 연결')+'</button></form>'+
+ '<label>관리자 비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="서버에 설정한 비밀번호"></label><button class="btn primary" type="submit"'+busy+'>'+(serverBusy?'연결 중…':connected?'다시 로그인':'자동 저장 연결')+'</button>'+
+ '<label class="server-remember"><input name="remember" type="checkbox" checked>이 기기에서 30일 동안 로그인 유지</label></form>'+(connected?'</details>':'')+
  '<div class="server-meta"><span>마지막 서버 저장 <b>'+E(last)+'</b></span><span>서버 버전 <b>'+E(s?.meta.version??'—')+'</b></span></div>'+
  '<div class="server-actions"><button class="btn" id="server-retry"'+(!connected||serverBusy?' disabled':'')+'>연결 다시 확인</button><button class="btn" id="server-pull"'+(!connected||serverBusy?' disabled':'')+'>서버 자료 불러오기</button><button class="btn" id="server-push"'+(!connected||serverBusy?' disabled':'')+'>현재 장부를 서버에 저장</button><button class="btn subtle" id="server-logout"'+(!connected||serverBusy?' disabled':'')+'>로그아웃</button></div>'+
  (s?.stopped?'<div class="notice storage-alert"><b>자료가 서로 달라 자동 저장을 멈췄습니다.</b><p>서버 자료를 불러오거나 현재 장부로 서버를 갱신할 수 있습니다. 바뀌는 쪽의 자료는 JSON으로 먼저 백업합니다.</p></div>':'')+
- '<p class="server-help">연결 전에는 이 브라우저에만 보관됩니다. 로그인은 이 탭에서 12시간 유지되며, 금융 엑셀 원본 파일은 서버에 전송하지 않습니다.</p></div></section>';
+ '<p class="server-help">로그인 유지 시 브라우저를 다시 열어도 자동 연결됩니다. 선택을 해제하면 이 탭에서 12시간만 유지됩니다. 비밀번호는 브라우저에 보관하지 않으며 금융 엑셀 원본은 서버에 전송하지 않습니다. 로그아웃하면 이 기기의 로그인 정보가 삭제됩니다.</p></div></section>';
 }
 async function serverAction(action,form){
  if(!sync||serverBusy)return;
@@ -1517,7 +1509,7 @@ async function serverAction(action,form){
  try{
   if(action==='login'){
    const values=new FormData(form);form.elements.password.value='';
-   await sync.login(String(values.get('apiBase')||''),String(values.get('password')||''));
+   await sync.login(String(values.get('apiBase')||''),String(values.get('password')||''),{remember:values.has('remember')});
   }else if(action==='pull')await sync.pull();
   else if(action==='push')await sync.push();
   else if(action==='logout')await sync.logout();
@@ -1552,10 +1544,11 @@ function patchRecord(id,updates){
  Object.assign(row,updates);
  normalizeWindmoon(row);
  if(row.scope==='excluded')row.status='excluded';
- else if(row.scope!=='review')row.status='confirmed';
+ else row.status=row.scope==='review'?'review':'confirmed';
  if(!save()){render();return false}render();return true;
 }
 function chooseScope(id,scope){
+ if(scope==='exclude'){excludeRecord(id);return}
  const row=state.records.find(x=>x.id===id);if(!row)return;
  const classification=G.classifyChoice(scope,row);
  const corrected={...classification};
@@ -1750,17 +1743,20 @@ async function processBank(file,range=bankImportRange){
 }
 async function onBankFile(file){
  if(!file)return;
+ const token=++bankLoadToken;preview=null;
  try{validateBankRange(bankImportRange);lastBankFile=file;
-  const token=++bankLoadToken;
+  const stateRaw=JSON.stringify(state);
   $('#save-indicator').textContent='금융내역 분석 중…';
   const result=await processBank(file,{...bankImportRange});
   if(token!==bankLoadToken)return;
-  preview=result;render();
+  if(stateRaw!==JSON.stringify(state)){render();toast('분석 중 장부가 바뀌었습니다. 엑셀 파일을 다시 선택해 주세요.');return}
+  preview={...result,stateRaw};render();
   toast('분석 완료: '+preview.newItems.length+'건 신규 후보, '+preview.reviewCount+'건 검토 필요');
- }catch(e){console.error(e);toast('엑셀 분석 오류: '+e.message);setStatus('가져오기 실패')}
+ }catch(e){if(token!==bankLoadToken)return;console.error(e);render();toast('엑셀 분석 오류: '+e.message)}
 }
 function commitBank(){
  if(!preview)return;
+ if(preview.stateRaw!==JSON.stringify(state)){preview=null;render();toast('미리보기 이후 장부가 바뀌었습니다. 엑셀 파일을 다시 선택해 주세요.');return}
  if(!confirm('신규 거래 '+preview.newItems.length+'건, 기존 시트 연결 '+preview.links.length+'건, 환불 '+(preview.refunds||[]).length+'건을 등록할까요?\n환불 중 '+(preview.refunds||[]).filter(x=>x.status==='matched').length+'건은 원결제와 연결해 순지출에서 차감합니다. 확실하지 않은 환불은 검토로 남깁니다.'))return;
  const map=new Map(state.records.map(x=>[x.id,x]));
  state.rentRecipients=state.rentRecipients||{};
@@ -1778,8 +1774,8 @@ function commitBank(){
  state.records.push(...preview.newItems);
  state.refunds=[...(state.refunds||[]),...(preview.refunds||[])];
  state.imports.push({at:new Date().toISOString(),name:preview.fileName,rows:preview.total,range:preview.range,outOfRange:preview.outOfRange,added:preview.newItems.length,linked:preview.links.length,review:preview.reviewCount,refundAdded:(preview.refunds||[]).length,refundMatched:(preview.refunds||[]).filter(x=>x.status==='matched').length});
- const count=preview.newItems.length,refundCount=(preview.refunds||[]).length;preview=null;
- if(save()){render();navigate('review');toast('거래 '+count+'건 · 환불 '+refundCount+'건 가져왔습니다. 미분류와 환불 검토를 확인하세요.')}
+ const count=preview.newItems.length,refundCount=(preview.refunds||[]).length;
+ if(save()){preview=null;render();navigate('review');toast('거래 '+count+'건 · 환불 '+refundCount+'건 가져왔습니다. 미분류와 환불 검토를 확인하세요.')}
 }
 /* Backup imports are strictly non-destructive. Even a year-old V2 snapshot may
    only add missing records/dates; it cannot replace or silently edit newer data. */
@@ -1796,13 +1792,18 @@ function planSafeLedgerMerge(current,incoming){
    return [x.direction||'expense',x.date,x.time||'',Number(x.amount),
      G.normalizeMerchant(x.merchant),G.normalizeMerchant(x.payment||'')].join('¦');
  };
+ // Reserve exact ID/bank/source matches before consuming signature matches.
+ // Two real charges can share their date, amount and merchant, in either file order.
+ const byId=new Map(currentRows.map(x=>[String(x.id),x]));
+ const byBank=new Map(currentRows.flatMap(x=>[x.bankKey,...(Array.isArray(x.extraBankKeys)?x.extraBankKeys:[])].filter(Boolean).map(k=>[k,x])));
+ const bySource=new Map(currentRows.filter(x=>sourceKey(x)).map(x=>[sourceKey(x),x]));
+ const reserved=new Set(incoming.records.map(x=>byId.get(String(x.id))||byBank.get(x.bankKey)||bySource.get(sourceKey(x))).filter(Boolean).map(x=>x.id));
  const currentCounts=new Map();
- for(const x of currentRows){const k=fingerprint(x);if(k)currentCounts.set(k,(currentCounts.get(k)||0)+1)}
+ for(const x of currentRows){if(reserved.has(x.id))continue;const k=fingerprint(x);if(k)currentCounts.set(k,(currentCounts.get(k)||0)+1)}
  const matchedCounts=new Map();
  const incomingIds=new Set(),incomingBank=new Set(),incomingSource=new Set();
  let duplicates=0,conflicts=0,invalid=0;
  const additions=[];
- const byId=new Map(currentRows.filter(x=>x.id!=null).map(x=>[String(x.id),x]));
  for(const raw of incoming.records){
    if(!raw||typeof raw!=='object'||!GagebuValidation.date(raw.date)
       ||!Number.isSafeInteger(Number(raw.amount))||Number(raw.amount)<0
@@ -1845,7 +1846,7 @@ function planSafeLedgerMerge(current,incoming){
    if(isMonth(month)&&Number.isSafeInteger(Number(value))&&current.storeProfits?.[month]==null)
      profitAdd[month]=Number(value);
  }
- const isEmpty=!currentRows.length&&!(current.dailyLotto||[]).length
+ const isEmpty=!currentRows.length&&!(current.dailyLotto||[]).length&&!(current.refunds||[]).length
    &&!Object.keys(current.storeProfits||{}).length
    &&!Object.keys(current.customRules||{}).length
    &&!(current.imports||[]).length;
@@ -2094,7 +2095,8 @@ function resetAllV2(confirmAction=true){
  if(!save()){state=previous;return false}
  preview=null;lastBankFile=null;bankLoadToken++;
  taxonomy();
- editing=null;sheetData.rows=[];sheetData.date=now();period='all';scopeFilter='all';typeFilter='all';q='';offset=0;reviewOffset=0;salesMonth=ym();lottoMonth=ym();
+ editing=null;sheetData.rows=[];sheetData.date=now();saveSheetDraft();period='all';scopeFilter='all';typeFilter='all';paymentFilter='all';recordsMode='active';q='';offset=0;reviewOffset=0;salesMonth=ym();lottoMonth=ym();
+ serverHistory=[];serverHistoryEntries=[];historyCursor=0;historyOlder=null;historyMessage='';
  render();toast('장부를 초기화했습니다.');
  return true;
 }
@@ -2217,7 +2219,7 @@ function onClick(event){
  if(target.id==='confirm-lotto'){confirmLotto();return}
  if(target.id==='new-record'){editRecord();return}
  if(target.id==='commit-bank'){commitBank();return}
- if(target.id==='discard-import'){preview=null;render();return}
+ if(target.id==='discard-import'){preview=null;lastBankFile=null;bankLoadToken++;render();return}
  if(target.id==='export-json'){exportJSON();return}
  if(target.id==='export-csv'){exportCSV();return}
  if(target.id==='mobile-menu'){const open=$('#sidebar').classList.toggle('open');target.setAttribute('aria-expanded',String(open));return}
@@ -2308,7 +2310,7 @@ function onChange(e){
 }
 function init(){
  restoreSheetDraft();
- load();
+ const loadedState=load();
  sync=new GagebuSync.LedgerSync({getState:()=>state,
   applyRemote:data=>{
    try{
@@ -2320,6 +2322,9 @@ function init(){
     const section=$('.server-storage');if(section)section.outerHTML=serverSettings();
    }},onError:error=>toast(error.message),confirm:message=>confirm(message),
   backup:(data,label)=>download('가계부_'+label+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json',JSON.stringify(data,null,2),'application/json;charset=utf-8')});
+ // Startup migrations run before sync exists. Commit them against the saved
+ // version so reopening this browser does not look like an unrelated device edit.
+ if(!corruptStorage&&Number.isSafeInteger(sync.meta.version)&&loadedState&&loadedState!==JSON.stringify(state))save();
  const route=location.hash.replace(/^#/,'');if(VIEWS[route])page=route;
  document.addEventListener('click',onClick);
  document.addEventListener('change',onChange);
@@ -2370,7 +2375,6 @@ function init(){
      if(id&&mapping[e.key]){e.preventDefault();chooseScope(id,mapping[e.key])}
    }
  }, true);
- const drop=$('#content');
  document.addEventListener('dragover',e=>{if(page==='import'&&e.dataTransfer?.types.includes('Files'))e.preventDefault()});
  document.addEventListener('drop',e=>{if(page!=='import'||!e.dataTransfer?.files?.length)return;e.preventDefault();onBankFile(e.dataTransfer.files[0])});
  window.addEventListener('storage',e=>{if(e.key===KEY&&e.newValue){try{const x=JSON.parse(e.newValue);if(GagebuValidation.validV2(x)){state=x;persistedState=e.newValue;sync.localChanged();render()}}catch(_){}}});

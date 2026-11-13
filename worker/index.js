@@ -9,6 +9,7 @@ import {handleOAuth} from './mcp-oauth.js';
 import {handleMcp} from './mcp.js';
 import {callManagement} from './management.js';
 const SESSION_SECONDS=12*60*60;
+const REMEMBER_SECONDS=30*24*60*60;
 const MAX_BODY_BYTES=4*1024*1024;
 const text = (status,message,origin,extras={})=>reply(status,{error:message},origin,extras);
 const reply=(status,payload,origin,extras={})=>new Response(JSON.stringify(payload),{
@@ -27,7 +28,8 @@ const createToken=()=>[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.t
 const readJson=async req=>{
   if(!String(req.headers.get('content-type')||'').startsWith('application/json'))throw Error('JSON Content-Type required');
   if(+(req.headers.get('content-length')||0)>MAX_BODY_BYTES)throw Error('Request exceeds 4 MB');
-  const raw=await req.text();if(enc.encode(raw).length>MAX_BODY_BYTES)throw Error('Request exceeds 4 MB');return JSON.parse(raw);
+  const raw=await req.text();if(enc.encode(raw).length>MAX_BODY_BYTES)throw Error('Request exceeds 4 MB');
+  const body=JSON.parse(raw);if(!body||typeof body!=='object'||Array.isArray(body))throw Error('JSON object required');return body;
 };
 const getToken=req=>{
   const auth=req.headers.get('authorization')||'';
@@ -74,13 +76,15 @@ export default {
       }
       if(path==='/api/login'&&req.method==='POST'){
         const body=await readJson(req);
+        if(body.remember!==undefined&&typeof body.remember!=='boolean')return text(400,'Invalid login settings',origin);
         const password=String(body.password||'');
         const checked=await checkPassword(req,env,password);if(checked.status!==200)return text(checked.status,checked.status===429?'Too many attempts, retry after 15 minutes':'Incorrect password',origin);
         const token=createToken();
+        const expiresAt=now()+(body.remember===true?REMEMBER_SECONDS:SESSION_SECONDS);
         await env.DB.prepare('DELETE FROM ledger_sessions WHERE expires_at <= ?').bind(now()).run();
         await env.DB.prepare('DELETE FROM auth_attempts WHERE reset_at <= ?').bind(now()).run();
-        await env.DB.prepare('INSERT INTO ledger_sessions(token_hash,created_at,expires_at) VALUES(?,?,?)').bind(await digest(`${env.SESSION_PEPPER}:${token}`),now(),now()+SESSION_SECONDS).run();
-        return reply(200,{token,expiresAt:now()+SESSION_SECONDS},origin);
+        await env.DB.prepare('INSERT INTO ledger_sessions(token_hash,created_at,expires_at) VALUES(?,?,?)').bind(await digest(`${env.SESSION_PEPPER}:${token}`),now(),expiresAt).run();
+        return reply(200,{token,expiresAt},origin);
       }
       if(!path.startsWith('/api/'))return text(404,'Not found',origin);
       if(!await verify(req,env))return text(401,'Login required',origin);
@@ -116,7 +120,7 @@ export default {
       return text(404,'Not found',origin);
     }catch(error){
       console.error('Ledger API error',error?.message);
-      if(error instanceof SyntaxError||/JSON Content-Type required|Request exceeds/.test(error?.message||''))return text(400,'Invalid request body',origin);
+      if(error instanceof SyntaxError||/JSON Content-Type required|JSON object required|Request exceeds/.test(error?.message||''))return text(400,'Invalid request body',origin);
       return text(500,'Server request failed',origin);
     }
   }
