@@ -25,6 +25,15 @@ test('strict dates, integer amounts and existing refund links',()=>{
  state.refunds.push({id:'r',date:'2026-11-02',amount:500,status:'matched',refundOf:'absent'});assert(!GagebuValidation.validV2(state));
  state.refunds[0].refundOf='a';assert(GagebuValidation.validV2(state));
 });
+test('malformed nested backup data is rejected without throwing',()=>{
+ for(const extra of [
+  {refunds:[null]},{refunds:[[]]},{customRules:{shop:null}},{rentRecipients:{shop:null}},
+  {taxonomyAliases:[null]},{imports:[null]},{excludedAudit:[null]},
+  {refunds:[{id:'r',date:'2026-11-02',amount:10,status:'review',merchant:{}}]}
+ ]){
+  let valid;assert.doesNotThrow(()=>{valid=GagebuValidation.validV2({...blank(),...extra})});assert.equal(valid,false);
+ }
+});
 test('chunked round trip preserves large Korean data, emoji and all V2 settings',async()=>{
  const db=new D1(),state=blank();state.records.push({...record(),note:'한글 🐈'.repeat(60000)});state.taxonomy={fixed:{임대:['월세']}};
  assert.equal((await readDocument(db)).data,null);
@@ -67,6 +76,25 @@ test('API login, V2 write/read, CAS conflict, logout and origin protection',asyn
 });
 test('health does not report success when storage/auth is missing',async()=>{
  assert.equal((await worker.fetch(request('/health'),{})).status,503);
+});
+test('API rejects null JSON and malformed refunds with 400 instead of server errors',async()=>{
+ const env={DB:new D1(),ADMIN_PASSWORD:'testpass',SESSION_PEPPER:'test-pepper-123456789123456789123456789'};
+ const badLogin=new Request('https://ledger.example/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'null'});
+ assert.equal((await worker.fetch(badLogin,env)).status,400);
+ const {token}=await(await worker.fetch(request('/api/login','POST',{password:env.ADMIN_PASSWORD}),env)).json();
+ assert.equal((await worker.fetch(request('/api/v2/state','PUT',{version:0,data:{...blank(),refunds:[null]}},token),env)).status,400);
+ assert.equal((await readDocument(env.DB)).version,0);
+});
+test('remembered API sessions last 30 days, temporary sessions 12 hours, and logout revokes either',async()=>{
+ const env={DB:new D1(),ADMIN_PASSWORD:'testpass',SESSION_PEPPER:'test-pepper-123456789123456789123456789'};
+ for(const [remember,seconds] of [[true,30*86400],[false,12*3600],[undefined,12*3600]]){
+  const start=Math.floor(Date.now()/1000),{token,expiresAt}=await(await worker.fetch(request('/api/login','POST',{password:env.ADMIN_PASSWORD,...(remember===undefined?{}:{remember})}),env)).json();
+  assert(Math.abs(expiresAt-start-seconds)<=1);
+  assert.equal((await worker.fetch(request('/api/v2/state','GET',null,token),env)).status,200);
+  await worker.fetch(request('/api/logout','POST',{},token),env);
+  assert.equal((await worker.fetch(request('/api/v2/state','GET',null,token),env)).status,401);
+ }
+ assert.equal((await worker.fetch(request('/api/login','POST',{password:env.ADMIN_PASSWORD,remember:'true'}),env)).status,400);
 });
 
 test('retained versions are readable without rewriting the active document',async()=>{
