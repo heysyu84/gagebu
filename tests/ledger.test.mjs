@@ -9,18 +9,30 @@ const purchase=(id='p',amount=10000)=>({id,date:'2026-10-25',amount,direction:'e
 const empty=()=>({version:2,records:[],dailyLotto:[],storeProfits:{},refunds:[]});
 const refund=(id='r')=>({id,date:'2026-11-02',amount:3000,status:'review',refundOf:'',merchant:'검증용 상점',payment:'카드'});
 function ledger(data=empty()){
- let fail=false;const memory=new Map();
+ let fail=false;const memory=new Map(),drafts=new Map();
  const ui={close(){},classList:{add(){},remove(){}},setAttribute(){},closest(){return this}};
  const context=vm.createContext({crypto:webcrypto,TextEncoder,Date,URL,Blob,console,
   localStorage:{getItem:key=>memory.get(key)??null,setItem:(key,value)=>{if(fail)throw Error('quota');memory.set(key,value)}},
+  sessionStorage:{getItem:key=>drafts.get(key)??null,setItem:(key,value)=>drafts.set(key,value)},
   document:{querySelector:()=>ui,querySelectorAll:()=>[]},confirm:()=>true,setTimeout,clearTimeout});
  context.window=context;
  for(const script of ['ledger-validation.js','ledger-rules-v2.js'])vm.runInContext(file(script),context);
- const expose=`render=()=>{};toast=()=>{};globalThis.ledgerTest={get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},setRefund:id=>activeRefund=id,setView:options=>{page=options.page||'records';period=options.period||'all';scopeFilter=options.scope||'all';typeFilter=options.type||'all';paymentFilter=options.payment||'all';q=options.query||'';recordsMode=options.mode||'active'},classificationChanges,canUndoClassification,undoClassification,changesPage,chooseScope,planSafeLedgerMerge,netExpenseAmount,financials,refundEntries,ledgerEntries,filtered,recordsPage,dashboard,transactionTable,transactionCSV,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save};`;
+ const expose=`
+ render=()=>{};toast=()=>{};navigate=()=>{};
+ globalThis.ledgerTest={
+  get:()=>state,set:data=>{state={...blank(),...data};persistedState=JSON.stringify(state)},
+  setRefund:id=>activeRefund=id,
+  setView:options=>{page=options.page||'records';period=options.period||'all';scopeFilter=options.scope||'all';typeFilter=options.type||'all';paymentFilter=options.payment||'all';q=options.query||'';recordsMode=options.mode||'active';reviewOffset=options.reviewOffset||0},
+  setParser:parseBankSalad=>window.BankSaladXLSX={parseBankSalad},getPreview:()=>preview,
+  setDraft:rows=>{sheetData.rows=rows;saveSheetDraft()},
+  classificationChanges,canUndoClassification,undoClassification,changesPage,chooseScope,planSafeLedgerMerge,
+  netExpenseAmount,financials,refundEntries,ledgerEntries,filtered,recordsPage,reviewPage,dashboard,transactionTable,
+  transactionCSV,changeRefund,deleteRecordById,excludeRecord,restoreRecord,save,onBankFile,commitBank,resetAllV2
+ };`;
  const source=file('ledger-v2.js');assert(source.endsWith('init();\n})();\n'));
  vm.runInContext(source.replace(/init\(\);\n\}\)\(\);\n$/,expose+'\n})();\n'),context);
  const api=context.ledgerTest;api.set(data);
- return {...api,storage:memory,fail:()=>{fail=true}};
+ return {...api,storage:memory,drafts,fail:()=>{fail=true}};
 }
 test('partial refunds use their own date and linking never deducts them twice',()=>{
  const f=ledger({...empty(),records:[purchase()],refunds:[refund()]});
@@ -169,4 +181,50 @@ test('classification history is bounded and normal amount edits do not add entri
  for(let i=0;i<104;i++)f.chooseScope('p',i%2?'personal':'business');
  assert.equal(f.get().classificationHistory.length,100);
  f.get().records[0].amount=22222;f.save();assert.equal(f.get().classificationHistory.length,100);
+});
+
+test('quick exclusion preserves the classification and restores a review item to review',()=>{
+ const row={...purchase(),scope:'review',status:'review'};
+ const f=ledger({...empty(),records:[row]});f.chooseScope('p','exclude');
+ assert.equal(f.get().records[0].category,row.category);
+ assert.equal(f.get().records[0].subcategory,row.subcategory);
+ assert.equal(f.financials('all').expenses,0);
+ f.restoreRecord('p');assert.equal(f.get().records[0].scope,'review');
+ assert.equal(f.get().records[0].status,'review');assert.equal(f.financials('all').expenses,0);
+});
+test('finishing the last item on a review page returns to the remaining items',()=>{
+ const records=Array.from({length:36},(_,i)=>({...purchase('p'+i),scope:'review',status:'review'}));
+ const f=ledger({...empty(),records});f.setView({page:'review',reviewOffset:35});f.chooseScope('p35','personal');
+ const html=f.reviewPage();assert.match(html,/data-review-id="p0"/);assert(!html.includes('36–35'));
+});
+test('backup matching consumes known IDs before comparing identical transaction signatures',()=>{
+ const f=ledger({...empty(),records:[purchase('known')]}),extra=purchase('additional');
+ for(const records of [[purchase('known'),extra],[extra,purchase('known')]]){
+  const plan=f.planSafeLedgerMerge(f.get(),{...empty(),records});
+  assert.equal(plan.added,1);assert.equal(plan.duplicates,1);assert.equal(plan.next.records[1].id,'additional');
+  const repeated=f.planSafeLedgerMerge(plan.next,{...empty(),records});assert.equal(repeated.added,0);
+ }
+});
+test('restoring a backup never overwrites settings on a refund-only ledger',()=>{
+ const current={...empty(),refunds:[refund()],lottoRatePct:6.5,paymentMethods:['내 카드']};
+ const f=ledger(current),plan=f.planSafeLedgerMerge(f.get(),{...empty(),records:[purchase()],lottoRatePct:3,paymentMethods:['옛 카드']});
+ assert.equal(plan.next.lottoRatePct,6.5);assert.deepEqual(Array.from(plan.next.paymentMethods),['내 카드']);
+ assert.equal(plan.next.refunds[0].id,'r');
+});
+test('stale bank previews cannot overwrite changes made after analysis',async()=>{
+ const f=ledger();f.setParser(async file=>({fileName:file.name,rows:[{date:'2026-11-02',time:'12:00',type:'지출',major:'생활',minor:'마트',merchant:'검증용 마트',amount:-1000,payment:'카드'}]}));
+ await f.onBankFile({name:'test.xlsx'});assert.equal(f.getPreview().newItems.length,1);
+ f.get().records.push(purchase('newer'));f.save();f.commitBank();
+ assert.equal(f.getPreview(),null);assert.equal(f.get().records.length,1);assert.equal(f.get().records[0].id,'newer');
+});
+test('changes made while the bank file is parsing invalidate the result',async()=>{
+ const f=ledger();let release;f.setParser(()=>new Promise(r=>release=r));
+ const loading=f.onBankFile({name:'test.xlsx'});f.get().records.push(purchase());f.save();
+ release({fileName:'test.xlsx',rows:[]});await loading;assert.equal(f.getPreview(),null);assert.equal(f.get().records.length,1);
+});
+test('reset removes the saved sheet draft so old entries cannot reappear on reload',()=>{
+ const f=ledger({...empty(),records:[purchase()]});f.setDraft([{date:'2026-11-02',amount:'5000',merchant:'미저장 거래'}]);
+ assert.equal(JSON.parse(f.drafts.get('gagebu-sheet-draft')).rows.length,1);
+ assert(f.resetAllV2(false));assert.equal(JSON.parse(f.drafts.get('gagebu-sheet-draft')).rows.length,0);
+ assert.equal(f.get().records.length,0);
 });
