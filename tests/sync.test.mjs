@@ -110,3 +110,36 @@ test('temporary sessions remain tab-only and expired remembered sessions cannot 
  f.local.setItem('gagebu-v2-session',JSON.stringify({url:'https://api.example',token:'a'.repeat(64),expiresAt:1}));
  const expired=new GagebuSync.LedgerSync({...f.sync.options,session:new Memory()});await expired.start();assert.equal(expired.status.kind,'login');assert.equal(expired.token,'');
 });
+test('a concurrent save of the identical ledger is acknowledged without a conflict warning',async t=>{
+ const f=setup(sample('a'));t.after(()=>clearTimeout(f.sync.timer));await f.sync.login('https://api.example','password');
+ f.edit(sample('same-edit'));f.changeRemote(sample('same-edit'));
+ await f.sync.flush();
+ assert.equal(f.sync.status.kind,'saved');assert.equal(f.sync.stopped,false);assert.equal(f.sync.meta.dirty,false);
+ assert.equal(f.sync.meta.version,f.remote().version);assert.equal(f.puts.length,2);
+});
+test('JSON object key order alone cannot cause a conflict or a financial write',async()=>{
+ const first=sample('a');first.customLabels={scopes:{personal:'개인',business:'편의점'},groups:{}};
+ const f=setup(first),other=structuredClone(first);
+ other.records[0]=Object.fromEntries(Object.entries(other.records[0]).reverse());
+ other.customLabels.scopes={business:'편의점',personal:'개인'};
+ f.changeRemote(Object.fromEntries(Object.entries(other).reverse()));
+ await f.sync.login('https://api.example','password');
+ assert.equal(f.sync.status.kind,'saved');assert.equal(f.sync.stopped,false);assert.equal(f.puts.length,0);
+});
+test('a mirrored change from another tab waits for its save and follows the resulting version',async t=>{
+ const f=setup(sample('a'));t.after(()=>clearTimeout(f.sync.timer));await f.sync.login('https://api.example','password');
+ let mirrored=structuredClone(f.state());
+ const peer=new GagebuSync.LedgerSync({...f.sync.options,session:new Memory(),getState:()=>mirrored,applyRemote:x=>{mirrored=structuredClone(x);return true}});
+ t.after(()=>clearTimeout(peer.timer));await peer.start();
+ f.edit(sample('other-tab'));mirrored=structuredClone(f.state());
+ await peer.externalChanged();assert.equal(peer.status.kind,'pending');assert.equal(peer.stopped,false);assert.equal(f.puts.length,1);
+ await f.sync.flush();const savedMeta=f.local.getItem(f.sync.metaKey);await peer.externalChanged();
+ assert.equal(peer.status.kind,'saved');assert.equal(peer.meta.version,f.remote().version);assert.equal(peer.meta.dirty,false);assert.equal(f.puts.length,2);
+ assert.equal(f.local.getItem(f.sync.metaKey),savedMeta,'Mirrored acknowledgements must not create an endless metadata event loop');
+});
+test('a real concurrent difference is still protected after the server rejects a stale write',async t=>{
+ const f=setup(sample('a'));t.after(()=>clearTimeout(f.sync.timer));await f.sync.login('https://api.example','password');
+ f.edit(sample('my-edit'));f.changeRemote(sample('other-device-edit'));await f.sync.flush();
+ assert.equal(f.sync.status.kind,'conflict');assert.equal(f.sync.stopped,true);
+ assert.equal(f.state().records[0].id,'my-edit');assert.equal(f.remote().data.records[0].id,'other-device-edit');assert.equal(f.backups.length,0);
+});

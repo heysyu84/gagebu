@@ -5,6 +5,8 @@
 const CONFIG='gagebu-v2-api',SESSION='gagebu-v2-session',META='gagebu-v2-sync:';
 const safeRead=(storage,key,fallback)=>{try{return JSON.parse(storage.getItem(key)||'null')??fallback}catch{return fallback}};
 const fingerprint=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),n=>n.toString(16).padStart(2,'0')).join('');
+const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
+const sameState=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
 class LedgerSync{
  constructor(options){
   this.options=options;this.local=options.local||localStorage;this.session=options.session||sessionStorage;
@@ -17,6 +19,7 @@ class LedgerSync{
   this.meta=safeRead(this.local,META+this.url,{});
  }
  notify(kind,label){this.status={kind,label};this.options.onStatus?.(this.status)}
+ get metaKey(){return META+this.url}
  storeMeta(){try{this.local.setItem(META+this.url,JSON.stringify(this.meta))}catch{}}
  clearSession(){this.token='';for(const storage of [this.local,this.session])try{storage.removeItem(SESSION)}catch{}}
  async request(path,{body,method='GET'}={}){
@@ -40,6 +43,25 @@ class LedgerSync{
   if(this.stopped)return;
   if(!this.token){this.notify('login','서버 로그인 필요 · 로컬 보관');return}
   this.notify('pending','로컬 저장됨 · 서버 저장 대기');this.schedule();
+ }
+ async externalChanged(){
+  // Other tabs already saved this document to the same localStorage. Mirroring
+  // it is not a new edit, and must not overwrite the writer's version metadata.
+  const shared=safeRead(this.local,this.metaKey,{});
+  if(this.url&&this.token&&shared.dirty){if(!this.stopped)this.notify('pending','로컬 저장됨 · 다른 탭에서 서버 저장 중');return}
+  if(this.url&&this.token){
+   const raw=JSON.stringify(this.options.getState()),hash=await fingerprint(raw);
+   if(raw!==JSON.stringify(this.options.getState()))return;
+   const latest=safeRead(this.local,this.metaKey,{});
+   if(latest.dirty){if(!this.stopped)this.notify('pending','로컬 저장됨 · 다른 탭에서 서버 저장 중');return}
+   if(Number.isSafeInteger(latest.version)&&latest.syncedHash===hash){
+    this.meta=latest;this.stopped=false;this.notify('saved','서버 저장 확인됨');return;
+   }
+   // Do not bounce a new lastSyncedAt write between tabs which have already
+   // acknowledged this version, even when their object key order differs.
+   if(!this.meta.dirty&&latest.version===this.meta.version&&hash===this.meta.syncedHash){this.notify('saved','서버 저장 확인됨');return}
+  }
+  await this.start();
  }
  schedule(){clearTimeout(this.timer);this.timer=setTimeout(()=>{this.timer=null;void this.flush()},650)}
  async start(){
@@ -101,12 +123,13 @@ class LedgerSync{
    this.notify('pending','서버 자료 확인 중');
    const localBefore=JSON.stringify(this.options.getState()),remote=await this.getRemote();
    const hash=await fingerprint(localBefore),remoteHash=remote.data?await fingerprint(JSON.stringify(remote.data)):null;
+   const matches=remote.data&&(remoteHash===hash||sameState(JSON.parse(localBefore),remote.data));
    // Check after every asynchronous read/hash, immediately before deciding which copy wins.
    if(JSON.stringify(this.options.getState())!==localBefore){
-    if(this.meta.version===remote.version||remoteHash===hash||remote.version===0&&!remote.data){
+    if(this.meta.version===remote.version||matches||remote.version===0&&!remote.data){
      this.meta.version=remote.version;this.meta.dirty=true;this.stopped=false;upload=true;
     }else{this.stopped=true;this.notify('conflict','확인 중 로컬 변경 · 자료 비교 필요');return}
-   }else if(remoteHash===hash){
+   }else if(matches){
     this.meta={version:remote.version,dirty:false,syncedHash:hash,lastSyncedAt:new Date().toISOString()};this.storeMeta();this.stopped=false;this.notify('saved','서버 저장 확인됨');return;
    }
    else if(remote.version===0&&!remote.data){this.meta.version=0;this.meta.dirty=true;this.stopped=false;upload=true}
@@ -126,7 +149,20 @@ class LedgerSync{
  async send(){
   const raw=JSON.stringify(this.options.getState()),version=this.meta.version;
   this.notify('pending','서버에 저장 중');
-  const result=await this.request('/api/v2/state',{method:'PUT',body:{version,data:JSON.parse(raw)}});
+  let result;
+  try{result=await this.request('/api/v2/state',{method:'PUT',body:{version,data:JSON.parse(raw)}})}
+  catch(error){
+   if(error.status!==409)throw error;
+   // Another tab may have committed the same change first. Verify the complete
+   // current document before accepting its version; a real difference still stops.
+   const remote=await this.getRemote(),current=JSON.stringify(this.options.getState());
+   if(!remote.data||!sameState(JSON.parse(current),remote.data))throw error;
+   this.meta={version:remote.version,syncedHash:await fingerprint(current),lastSyncedAt:new Date().toISOString()};
+   this.meta.dirty=JSON.stringify(this.options.getState())!==current;this.stopped=false;this.storeMeta();
+   if(this.meta.dirty){this.notify('pending','추가 변경 저장 대기');this.schedule()}
+   else this.notify('saved','서버 저장 확인됨');
+   return;
+  }
   if(result.version!==version+1)throw Error('저장 버전 응답을 확인하세요.');
   this.meta.version=result.version;this.meta.syncedHash=await fingerprint(raw);this.meta.lastSyncedAt=new Date().toISOString();
   this.meta.dirty=JSON.stringify(this.options.getState())!==raw;this.storeMeta();

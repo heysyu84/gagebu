@@ -2377,7 +2377,13 @@ function init(){
  }, true);
  document.addEventListener('dragover',e=>{if(page==='import'&&e.dataTransfer?.types.includes('Files'))e.preventDefault()});
  document.addEventListener('drop',e=>{if(page!=='import'||!e.dataTransfer?.files?.length)return;e.preventDefault();onBankFile(e.dataTransfer.files[0])});
- window.addEventListener('storage',e=>{if(e.key===KEY&&e.newValue){try{const x=JSON.parse(e.newValue);if(GagebuValidation.validV2(x)){state=x;persistedState=e.newValue;sync.localChanged();render()}}catch(_){}}});
+ window.addEventListener('storage',e=>{
+  if(e.key===KEY&&e.newValue){try{const x=JSON.parse(e.newValue);if(GagebuValidation.validV2(x)){
+   if(!sync.meta.dirty&&!sync.flight){state=x;persistedState=e.newValue;render()}
+   void sync.externalChanged();
+  }}catch(_){}}
+  else if(e.key===sync.metaKey)void sync.externalChanged();
+ });
  window.addEventListener('online',()=>void sync.start());
  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&sync.token)void sync.start()});
  window.addEventListener('hashchange',()=>{const route=location.hash.slice(1);if(VIEWS[route]&&route!==page)navigate(route)});
